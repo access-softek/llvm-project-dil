@@ -1410,11 +1410,11 @@ TEST_F(EvalTest, TestCStyleCastPointer) {
 
   // EXPECT_THAT(
   //     Eval("(nullptr_t)1"),
-  //     IsError("C-style cast from 'int' to 'nullptr_t' (aka 'std::nullptr_t')"
+  //     IsError("C-style cast from 'int' to 'nullptr_t' (canonically referred to as 'std::nullptr_t')"
   //             " is not allowed"));
   // EXPECT_THAT(
   //     Eval("(nullptr_t)ap"),
-  //     IsError("C-style cast from 'int *' to 'nullptr_t' (aka 'std::nullptr_t')"
+  //     IsError("C-style cast from 'int *' to 'nullptr_t' (canonically referred to as 'std::nullptr_t')"
   //             " is not allowed"));
 }
 
@@ -1547,11 +1547,11 @@ TEST_F(EvalTest, TestCxxStaticCast) {
 
   // EXPECT_THAT(
   //     Eval("static_cast<nullptr_t>((int)0)"),
-  //     IsError("static_cast from 'int' to 'nullptr_t' (aka 'std::nullptr_t')"
+  //     IsError("static_cast from 'int' to 'nullptr_t' (canonically referred to as 'std::nullptr_t')"
   //             " is not allowed"));
   // EXPECT_THAT(
   //     Eval("static_cast<nullptr_t>((void*)0)"),
-  //     IsError("static_cast from 'void *' to 'nullptr_t' (aka 'std::nullptr_t')"
+  //     IsError("static_cast from 'void *' to 'nullptr_t' (canonically referred to as 'std::nullptr_t')"
   //             " is not allowed"));
 
   // Cast to references.
@@ -1706,8 +1706,8 @@ TEST_F(EvalTest, TestCxxReinterpretCast) {
         Eval("reinterpret_cast<int>(ptr)"),
         IsError("cast from pointer to smaller type 'int' loses information"));
     EXPECT_THAT(Eval("reinterpret_cast<td_int_t>(ptr)"),
-                IsError("cast from pointer to smaller type 'td_int_t' (aka "
-                        "'int') loses information"));
+                IsError("cast from pointer to smaller type 'td_int_t' ("
+                        "canonically referred to as 'int') loses information"));
   }
   EXPECT_THAT(
       Eval("reinterpret_cast<bool>(arr)"),
@@ -1747,13 +1747,13 @@ TEST_F(EvalTest, TestCxxReinterpretCast) {
   // EXPECT_THAT(
   //     Eval("reinterpret_cast<nullptr_t>(ptr)"),
   //     IsError("reinterpret_cast from 'int *' to 'nullptr_t' "
-  //             "(aka 'std::nullptr_t') is not allowed"));
+  //             "(canonically referred to as 'std::nullptr_t') is not allowed"));
   // EXPECT_THAT(Eval("reinterpret_cast<nullptr_t>(0)"),
   //             IsError("reinterpret_cast from 'int' to 'nullptr_t' "
-  //                     "(aka 'std::nullptr_t') is not allowed"));
+  //                     "(canonically referred to as 'std::nullptr_t') is not allowed"));
   // EXPECT_THAT(Eval("reinterpret_cast<nullptr_t>(nullptr)"),
   //             IsError("reinterpret_cast from 'std::nullptr_t' to 'nullptr_t' "
-  //                     "(aka 'std::nullptr_t') is not allowed"));
+  //                     "(canonically referred to as 'std::nullptr_t') is not allowed"));
 
   // L-values can be converted to reference type.
   EXPECT_THAT(Eval("reinterpret_cast<CxxBase&>(arr[0]).a"), IsEqual("1"));

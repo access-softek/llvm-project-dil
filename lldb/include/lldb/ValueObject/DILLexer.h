@@ -196,9 +196,9 @@ class DILSourceManager {
   DILSourceManager(const DILSourceManager&) = delete;
   DILSourceManager& operator=(DILSourceManager const&) = delete;
 
-  std::string GetSource() { return m_expr; }
+  llvm::StringRef GetSource() { return m_expr; }
 
- private:
+private:
   explicit DILSourceManager(std::string expr)  : m_expr(std::move(expr)) {}
 
  private:

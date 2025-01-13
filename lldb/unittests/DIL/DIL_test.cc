@@ -550,6 +550,10 @@ TEST_F(EvalTest, TestArithmetic) {
   EXPECT_THAT(Eval("1 / -0.0"), IsEqual("-Inf"));
   EXPECT_THAT(Eval("+0.0 / +0.0  != +0.0 / +0.0"), IsEqual("true"));
   EXPECT_THAT(Eval("-1.f * 0"), IsEqual("-0"));
+  EXPECT_THAT(Eval("2. + .5"), IsEqual("2.5"));
+  EXPECT_THAT(Eval("1e2"), IsEqual("100"));
+  EXPECT_THAT(Eval("1e+2"), IsEqual("100"));
+  EXPECT_THAT(Eval(".12e+1"), IsEqual("1.2"));
   EXPECT_THAT(Eval("0x0.123p-1"), IsEqual("0.0355224609375"));
 
   EXPECT_THAT(Eval("fnan < fnan"), IsEqual("false"));

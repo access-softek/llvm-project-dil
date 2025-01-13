@@ -12,10 +12,30 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/ValueObject/DILLexer.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace lldb_private {
 
 namespace dil {
+
+const llvm::StringMap<dil::TokenKind> Keywords = {
+    {"bool", dil::TokenKind::kw_bool},
+    {"char", dil::TokenKind::kw_char},
+    {"double", dil::TokenKind::kw_double},
+    {"dynamic_cast", dil::TokenKind::kw_dynamic_cast},
+    {"false", dil::TokenKind::kw_false},
+    {"float", dil::TokenKind::kw_float},
+    {"int", dil::TokenKind::kw_int},
+    {"long", dil::TokenKind::kw_long},
+    {"nullptr", dil::TokenKind::kw_nullptr},
+    {"reinterpret_cast", dil::TokenKind::kw_reinterpret_cast},
+    {"short", dil::TokenKind::kw_short},
+    {"signed", dil::TokenKind::kw_signed},
+    {"static_cast", dil::TokenKind::kw_static_cast},
+    {"this", dil::TokenKind::kw_this},
+    {"true", dil::TokenKind::kw_true},
+    {"unsigned", dil::TokenKind::kw_unsigned},
+};
 
 const std::string DILToken::getTokenName(dil::TokenKind kind) {
   std::string retval;
@@ -193,38 +213,9 @@ bool DILLexer::Lex(DILToken &result, bool look_ahead) {
   } else if (Is_Word(start, length)) {
     dil::TokenKind kind;
     std::string word = m_expr.substr(position, length);
-    if (word == "bool")
-      kind = dil::TokenKind::kw_bool;
-    else if (word == "char")
-      kind = dil::TokenKind::kw_char;
-    else if (word == "double")
-      kind = dil::TokenKind::kw_double;
-    else if (word == "dynamic_cast")
-      kind = dil::TokenKind::kw_dynamic_cast;
-    else if (word == "false")
-      kind = dil::TokenKind::kw_false;
-    else if (word == "float")
-      kind = dil::TokenKind::kw_float;
-    else if (word == "int")
-      kind = dil::TokenKind::kw_int;
-    else if (word == "long")
-      kind = dil::TokenKind::kw_long;
-    else if (word == "nullptr")
-      kind = dil::TokenKind::kw_nullptr;
-    else if (word == "reinterpret_cast")
-      kind = dil::TokenKind::kw_reinterpret_cast;
-    else if (word == "short")
-      kind = dil::TokenKind::kw_short;
-    else if (word == "signed")
-      kind = dil::TokenKind::kw_signed;
-    else if (word == "static_cast")
-      kind = dil::TokenKind::kw_static_cast;
-    else if (word == "this")
-      kind = dil::TokenKind::kw_this;
-   else if (word == "true")
-      kind = dil::TokenKind::kw_true;
-    else if (word == "unsigned")
-      kind = dil::TokenKind::kw_unsigned;
+    auto iter = Keywords.find(word);
+    if (iter != Keywords.end())
+      kind = iter->second;
     else
       kind = dil::TokenKind::identifier;
     UpdateLexedTokens(result, kind, word, position,

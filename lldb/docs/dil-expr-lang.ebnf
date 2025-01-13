@@ -140,16 +140,20 @@ ptr_operator = "*" [cv_qualifier_seq]
              | "&" ;
 
 id_expression = unqualified_id
-              | qualified_id ;
+              | qualified_id
+              | register ;
 
 unqualified_id = identifier ;
 
 qualified_id = ["::"] [nested_name_specifier] unqualified_id
              | ["::"] identifier ;
 
-identifier = ? clang::tok::identifier ? ;
+identifier = ? C99 Identifier ? ;
 
-numeric_literal = ? clang::tok::numeric_constant ? ;
+numeric_literal = ? C99 Integer constant ?
+                | ? C99 Floating constant ? ;
+
+register = "$" ? Register name ? ;
 
 boolean_literal = "true" | "false" ;
 

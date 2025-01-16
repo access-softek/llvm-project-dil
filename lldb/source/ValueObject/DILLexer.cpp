@@ -35,6 +35,14 @@ const llvm::StringMap<dil::TokenKind> Keywords = {
     {"this", dil::TokenKind::kw_this},
     {"true", dil::TokenKind::kw_true},
     {"unsigned", dil::TokenKind::kw_unsigned},
+    {"char16_t", dil::TokenKind::kw_char16_t},
+    {"char32_t", dil::TokenKind::kw_char32_t},
+    {"wchar_t", dil::TokenKind::kw_wchar_t},
+    {"const", dil::TokenKind::kw_const},
+    {"sizeof", dil::TokenKind::kw_sizeof},
+    {"void", dil::TokenKind::kw_void},
+    {"volatile", dil::TokenKind::kw_volatile},
+    {"namespace", dil::TokenKind::kw_namespace}
 };
 
 const std::string DILToken::getTokenName(dil::TokenKind kind) {

@@ -99,7 +99,6 @@ enum class TokenKind {
   wide_char_constant,
   wide_string_literal,
   word,
-  // type keywords -- Lexer does not recognize these yet.
   kw_char16_t,
   kw_char32_t,
   kw_const,

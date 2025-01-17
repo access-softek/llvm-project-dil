@@ -134,7 +134,7 @@ bool DILLexer::Is_Word(std::string::iterator start, uint32_t& length) {
   return false;
 }
 
-void DILLexer::ConsumeNumberBody(uint32_t& length, char &prev_ch) {
+void DILLexer::ConsumeNumberBody(uint32_t &length, char &prev_ch) {
   while (m_cur_pos != m_expr.end() &&
          (Is_Digit(*m_cur_pos) || Is_Letter(*m_cur_pos) || *m_cur_pos == '_')) {
     prev_ch = *m_cur_pos;
@@ -163,8 +163,9 @@ bool DILLexer::Is_Number(std::string::iterator start, uint32_t& length,
       ConsumeNumberBody(length, prev_ch);
     }
     // Check the exponent part
-    if ((*m_cur_pos == '-' || *m_cur_pos == '+') && 
-        (prev_ch == 'E' || prev_ch == 'e' || prev_ch == 'P' || prev_ch == 'p')) {
+    if ((*m_cur_pos == '-' || *m_cur_pos == '+') &&
+        (prev_ch == 'E' || prev_ch == 'e' || prev_ch == 'P' ||
+         prev_ch == 'p')) {
       prev_ch = *m_cur_pos;
       length++;
       m_cur_pos++;

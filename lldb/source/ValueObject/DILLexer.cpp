@@ -21,21 +21,28 @@ namespace dil {
 const llvm::StringMap<dil::TokenKind> Keywords = {
     {"bool", dil::TokenKind::kw_bool},
     {"char", dil::TokenKind::kw_char},
+    {"char16_t", dil::TokenKind::kw_char16_t},
+    {"char32_t", dil::TokenKind::kw_char32_t},
+    {"const", dil::TokenKind::kw_const},
     {"double", dil::TokenKind::kw_double},
     {"dynamic_cast", dil::TokenKind::kw_dynamic_cast},
     {"false", dil::TokenKind::kw_false},
     {"float", dil::TokenKind::kw_float},
     {"int", dil::TokenKind::kw_int},
     {"long", dil::TokenKind::kw_long},
+    {"namespace", dil::TokenKind::kw_namespace},
     {"nullptr", dil::TokenKind::kw_nullptr},
     {"reinterpret_cast", dil::TokenKind::kw_reinterpret_cast},
     {"short", dil::TokenKind::kw_short},
     {"signed", dil::TokenKind::kw_signed},
+    {"sizeof", dil::TokenKind::kw_sizeof},
     {"static_cast", dil::TokenKind::kw_static_cast},
     {"this", dil::TokenKind::kw_this},
     {"true", dil::TokenKind::kw_true},
     {"unsigned", dil::TokenKind::kw_unsigned},
-};
+    {"void", dil::TokenKind::kw_void},
+    {"volatile", dil::TokenKind::kw_volatile},
+    {"wchar_t", dil::TokenKind::kw_wchar_t}};
 
 const std::string DILToken::getTokenName(dil::TokenKind kind) {
   std::string retval;

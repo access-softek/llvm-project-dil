@@ -134,29 +134,44 @@ bool DILLexer::Is_Word(std::string::iterator start, uint32_t& length) {
   return false;
 }
 
+void DILLexer::ConsumeNumberBody(uint32_t &length, char &prev_ch) {
+  while (m_cur_pos != m_expr.end() &&
+         (Is_Digit(*m_cur_pos) || Is_Letter(*m_cur_pos) || *m_cur_pos == '_')) {
+    prev_ch = *m_cur_pos;
+    length++;
+    m_cur_pos++;
+  }
+}
+
 bool DILLexer::Is_Number(std::string::iterator start, uint32_t& length,
                          dil::NumberKind& kind) {
-
-  if (Is_Digit(*start)) {
-    while (m_cur_pos != m_expr.end() && Is_Digit(*m_cur_pos)) {
-      length++;
-      m_cur_pos++;
-    }
-    if (m_cur_pos == m_expr.end() || (*m_cur_pos != '.')) {
-      kind = dil::NumberKind::eInteger;
-      return true;
-    }
+  char prev_ch = 0;
+  kind = dil::NumberKind::eInteger;
+  if (*start == '.') {
+    auto next_pos = start + 1;
+    if (next_pos == m_expr.end() || !Is_Digit(*next_pos))
+      return false;
+  }
+  if (Is_Digit(*start) || *start == '.') {
+    ConsumeNumberBody(length, prev_ch);
     // We're not at the end of the string, and we should be looking at a '.'
     if (*m_cur_pos == '.') {
+      kind = dil::NumberKind::eFloat;
+      prev_ch = *m_cur_pos;
       length++;
       m_cur_pos++;
-      while (m_cur_pos != m_expr.end() && Is_Digit(*m_cur_pos)) {
-        length++;
-        m_cur_pos++;
-      }
-      kind = dil::NumberKind::eFloat;
-      return true;
+      ConsumeNumberBody(length, prev_ch);
     }
+    // Check the exponent part
+    if ((*m_cur_pos == '-' || *m_cur_pos == '+') &&
+        (prev_ch == 'E' || prev_ch == 'e' || prev_ch == 'P' ||
+         prev_ch == 'p')) {
+      prev_ch = *m_cur_pos;
+      length++;
+      m_cur_pos++;
+      ConsumeNumberBody(length, prev_ch);
+    }
+    return true;
   }
   return false;
 }

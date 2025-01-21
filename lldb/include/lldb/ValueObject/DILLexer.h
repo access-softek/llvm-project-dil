@@ -223,6 +223,7 @@ class DILLexer {
 
   bool Is_Word(std::string::iterator start, uint32_t& length);
 
+  void ConsumeNumberBody(uint32_t &length, char &prev_ch);
   bool Is_Number(std::string::iterator start, uint32_t& length,
                  dil::NumberKind& kind);
 

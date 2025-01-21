@@ -481,6 +481,11 @@ void DILInterpreter::Visit(const IdentifierNode* node) {
       assert(false && "invalid ast: invalid identifier kind");
   }
 
+  if (val->GetCompilerType().IsReferenceType()) {
+    Status error;
+    val = val->Dereference(error);
+  }
+
   target_sp = val->GetTargetSP();
   assert(target_sp && target_sp->IsValid() &&
          "identifier doesn't resolve to a valid value");

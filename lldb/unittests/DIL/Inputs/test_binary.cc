@@ -31,10 +31,10 @@ static void TestArithmetic() {
   unsigned long long ull_zero = 0;
 
   int x = 2;
-  int& r = x;
-  int* p = &x;
+  int &r = x;
+  int *p = &x;
 
-  typedef int& myr;
+  typedef int &myr;
   myr my_r = x;
 
   auto fnan = std::numeric_limits<float>::quiet_NaN();
@@ -56,7 +56,7 @@ static void TestBitwiseOperators() {
   struct S {
   } s;
 
-  const char* p = nullptr;
+  const char *p = nullptr;
 
   uint32_t mask_ff = 0xFF;
 
@@ -64,10 +64,10 @@ static void TestBitwiseOperators() {
 }
 
 static void TestPointerArithmetic() {
-  int* p_null = nullptr;
-  const char* p_char1 = "hello";
+  int *p_null = nullptr;
+  const char *p_char1 = "hello";
 
-  typedef const char* my_char_ptr;
+  typedef const char *my_char_ptr;
   my_char_ptr my_p_char1 = p_char1;
 
   int offset = 5;
@@ -77,17 +77,17 @@ static void TestPointerArithmetic() {
 
   int(&array_ref)[10] = array;
 
-  int* p_int0 = &array[0];
-  int** pp_int0 = &p_int0;
-  const int* cp_int0 = &array[0];
-  const int* cp_int5 = &array[offset];
+  int *p_int0 = &array[0];
+  int **pp_int0 = &p_int0;
+  const int *cp_int0 = &array[0];
+  const int *cp_int5 = &array[offset];
 
-  typedef int* td_int_ptr_t;
+  typedef int *td_int_ptr_t;
   td_int_ptr_t td_int_ptr0 = &array[0];
 
-  void* p_void = (void*)p_char1;
-  void** pp_void0 = &p_void;
-  void** pp_void1 = pp_void0 + 1;
+  void *p_void = (void *)p_char1;
+  void **pp_void0 = &p_void;
+  void **pp_void1 = pp_void0 + 1;
 
   std::nullptr_t std_nullptr_t = nullptr;
 
@@ -102,8 +102,8 @@ static void TestLogicalOperators() {
   bool trueVar = true;
   bool falseVar = false;
 
-  const char* p_ptr = "🦊";
-  const char* p_nullptr = nullptr;
+  const char *p_ptr = "🦊";
+  const char *p_nullptr = nullptr;
 
   int array[2] = {1, 2};
 
@@ -127,12 +127,12 @@ static void TestMemberOf() {
   int x = 2;
   struct Sx {
     int x;
-    int& r;
+    int &r;
     char y;
   } s{1, x, 2};
 
-  Sx& sr = s;
-  Sx* sp = &s;
+  Sx &sr = s;
+  Sx *sp = &s;
 
   Sx sarr[2] = {{5, x, 2}, {1, x, 3}};
 
@@ -207,14 +207,14 @@ static void TestMemberOfInheritance() {
   struct Mixin {};
   struct Parent : private Mixin, public Base {
     int z;
-    virtual void Do(){};
+    virtual void Do() {};
   };
   Parent obj;
   obj.x = 1;
   obj.y = 2;
   obj.z = 3;
-  Base* parent_base = &obj;
-  Parent* parent = &obj;
+  Base *parent_base = &obj;
+  Parent *parent = &obj;
 
   // BREAK(TestMemberOfInheritance)
 }
@@ -242,7 +242,7 @@ static void TestMemberOfAnonymousMember() {
       int x = 5;
     };
     class {
-     public:
+    public:
       int y = 6;
     };
   } c;
@@ -295,12 +295,12 @@ static void TestMemberOfAnonymousMember() {
 
 static void TestIndirection() {
   int val = 1;
-  int* p = &val;
+  int *p = &val;
 
-  typedef int* myp;
+  typedef int *myp;
   myp my_p = &val;
 
-  typedef int*& mypr;
+  typedef int *&mypr;
   mypr my_pr = p;
 
   // BREAK(TestIndirection)
@@ -308,7 +308,7 @@ static void TestIndirection() {
 
 // Referenced by TestInstanceVariables
 class C {
- public:
+public:
   int field_ = 1337;
 };
 
@@ -316,54 +316,54 @@ class C {
 int globalVar = 0xDEADBEEF;
 extern int externGlobalVar;
 
-int* globalPtr = &globalVar;
-int& globalRef = globalVar;
+int *globalPtr = &globalVar;
+int &globalRef = globalVar;
 
 namespace ns {
 int globalVar = 13;
-int* globalPtr = &globalVar;
-int& globalRef = globalVar;
-}  // namespace ns
+int *globalPtr = &globalVar;
+int &globalRef = globalVar;
+} // namespace ns
 
 void TestGlobalVariableLookup() {
   // BREAK(TestGlobalVariableLookup)
 }
 
 class TestMethods {
- public:
+public:
   void TestInstanceVariables() {
     C c;
     c.field_ = -1;
 
-    C& c_ref = c;
-    C* c_ptr = &c;
+    C &c_ref = c;
+    C *c_ptr = &c;
 
     // BREAK(TestInstanceVariables)
   }
 
   void TestAddressOf(int param) {
     int x = 42;
-    int& r = x;
-    int* p = &x;
-    int*& pr = p;
+    int &r = x;
+    int *p = &x;
+    int *&pr = p;
 
-    typedef int*& mypr;
+    typedef int *&mypr;
     mypr my_pr = p;
 
     std::string s = "hello";
-    const char* s_str = s.c_str();
+    const char *s_str = s.c_str();
 
     char c = 1;
 
     // BREAK(TestAddressOf)
   }
 
- private:
+private:
   int field_ = 1;
 };
 
 static void TestSubscript() {
-  const char* char_ptr = "lorem";
+  const char *char_ptr = "lorem";
   const char char_arr[] = "ipsum";
 
   int int_arr[] = {1, 2, 3};
@@ -375,12 +375,12 @@ static void TestSubscript() {
   C(&c_arr_ref)[2] = c_arr;
 
   int idx_1 = 1;
-  const int& idx_1_ref = idx_1;
+  const int &idx_1_ref = idx_1;
 
   typedef int td_int_t;
   typedef td_int_t td_td_int_t;
-  typedef int* td_int_ptr_t;
-  typedef int& td_int_ref_t;
+  typedef int *td_int_ptr_t;
+  typedef int &td_int_ref_t;
 
   td_int_t td_int_idx_1 = 1;
   td_td_int_t td_td_int_idx_2 = 2;
@@ -394,10 +394,10 @@ static void TestSubscript() {
   unsigned char uchar_idx = std::numeric_limits<unsigned char>::max();
   uint8_t uint8_arr[256];
   uint8_arr[255] = 0xAB;
-  uint8_t* uint8_ptr = uint8_arr;
+  uint8_t *uint8_ptr = uint8_arr;
 
   enum Enum { kZero, kOne } enum_one = kOne;
-  Enum& enum_ref = enum_one;
+  Enum &enum_ref = enum_one;
 
   // BREAK(TestSubscript)
 }
@@ -422,14 +422,14 @@ using mydouble = double;
 
 class Foo {};
 
-}  // namespace inner
+} // namespace inner
 
-}  // namespace ns
+} // namespace ns
 
 static void TestCStyleCast() {
   int a = 1;
-  int* ap = &a;
-  void* vp = &a;
+  int *ap = &a;
+  void *vp = &a;
   int arr[2] = {1, 2};
 
   int na = -1;
@@ -440,11 +440,11 @@ static void TestCStyleCast() {
   myint myint_ = 1;
   ns::myint ns_myint_ = 2;
   ns::Foo ns_foo_;
-  ns::Foo* ns_foo_ptr_ = &ns_foo_;
+  ns::Foo *ns_foo_ptr_ = &ns_foo_;
 
   ns::inner::mydouble ns_inner_mydouble_ = 1.2;
   ns::inner::Foo ns_inner_foo_;
-  ns::inner::Foo* ns_inner_foo_ptr_ = &ns_inner_foo_;
+  ns::inner::Foo *ns_inner_foo_ptr_ = &ns_inner_foo_;
 
   float finf = std::numeric_limits<float>::infinity();
   float fnan = std::numeric_limits<float>::quiet_NaN();
@@ -498,8 +498,8 @@ static void TestCxxCast() {
   SEnum s_enum = SEnum::kSOne;
 
   typedef int td_int_t;
-  typedef int* td_int_ptr_t;
-  typedef int& td_int_ref_t;
+  typedef int *td_int_ptr_t;
+  typedef int &td_int_ref_t;
   typedef SEnum td_senum_t;
   td_int_t td_int = 13;
   td_int_ptr_t td_int_ptr = &td_int;
@@ -512,10 +512,10 @@ static void TestCxxCast() {
   parent.c = 3;
   parent.d = 4;
 
-  CxxBase* base = &parent;
+  CxxBase *base = &parent;
 
   int arr[] = {1, 2, 3, 4, 5};
-  int* ptr = arr;
+  int *ptr = arr;
 
   // BREAK(TestCxxStaticCast)
   // BREAK(TestCxxReinterpretCast)
@@ -523,7 +523,7 @@ static void TestCxxCast() {
   CxxVirtualParent v_parent;
   v_parent.a = 1;
   v_parent.b = 2;
-  CxxVirtualBase* v_base = &v_parent;
+  CxxVirtualBase *v_base = &v_parent;
 
   // BREAK(TestCxxDynamicCast)
 }
@@ -578,8 +578,8 @@ void TestCastInheritedTypes() {
   ve.d = 18;
   ve.e = 19;
 
-  CxxB* e_as_b = &e;
-  CxxB* ve_as_b = &ve;
+  CxxB *e_as_b = &e;
+  CxxB *ve_as_b = &ve;
 
   // BREAK(TestCastBaseToDerived)
   // BREAK(TestCastDerivedToBase)
@@ -594,9 +594,9 @@ namespace ns {
 
 int i = 2;
 
-}  // namespace ns
+} // namespace ns
 
-}  // namespace ns
+} // namespace ns
 
 static void TestQualifiedId() {
   // BREAK(TestQualifiedId)
@@ -607,7 +607,7 @@ namespace outer {
 namespace inner {
 
 class Vars {
- public:
+public:
   inline static double inline_static = 1.5;
   static constexpr int static_constexpr = 2;
   static const unsigned int static_const;
@@ -622,10 +622,10 @@ const int Vars::Nested::static_const = 10;
 
 using MyVars = Vars;
 
-}  // namespace inner
+} // namespace inner
 
 class Vars {
- public:
+public:
   inline static double inline_static = 4.5;
   static constexpr int static_constexpr = 5;
   static const unsigned int static_const;
@@ -638,10 +638,10 @@ class Vars {
 const unsigned int Vars::static_const = 6;
 const int Vars::Nested::static_const = 20;
 
-}  // namespace outer
+} // namespace outer
 
 class Vars {
- public:
+public:
   inline static double inline_static = 7.5;
   static constexpr int static_constexpr = 8;
   static const unsigned int static_const;
@@ -671,8 +671,7 @@ static void TestStaticConst() {
 }
 
 // Referenced by TestTemplateTypes.
-template <typename T>
-struct T_1 {
+template <typename T> struct T_1 {
   static const int cx;
   typedef double myint;
 
@@ -681,14 +680,11 @@ struct T_1 {
   T x;
 };
 
-template <typename T>
-const int T_1<T>::cx = 42;
+template <typename T> const int T_1<T>::cx = 42;
 
-template <>
-const int T_1<int>::cx = 24;
+template <> const int T_1<int>::cx = 24;
 
-template <typename T1, typename T2>
-struct T_2 {
+template <typename T1, typename T2> struct T_2 {
   typedef float myint;
 
   T_2() {}
@@ -698,8 +694,7 @@ struct T_2 {
 
 namespace ns {
 
-template <typename T>
-struct T_1 {
+template <typename T> struct T_1 {
   static const int cx;
   typedef int myint;
 
@@ -708,23 +703,21 @@ struct T_1 {
   T x;
 };
 
-template <typename T>
-const int T_1<T>::cx = 46;
+template <typename T> const int T_1<T>::cx = 46;
 
-template <>
-const int T_1<int>::cx = 64;
+template <> const int T_1<int>::cx = 64;
 
-}  // namespace ns
+} // namespace ns
 
 static void TestTemplateTypes() {
   int i;
-  int* p = &i;
+  int *p = &i;
 
   { T_1<int> _; }
-  { T_1<int*> _; }
-  { T_1<int**> _; }
-  { T_1<int&> _(i); }
-  { T_1<int*&> _(p); }
+  { T_1<int *> _; }
+  { T_1<int **> _; }
+  { T_1<int &> _(i); }
+  { T_1<int *&> _(p); }
   { T_1<double> _; }
   { T_2<int, char> _; }
   { T_2<char, int> _; }
@@ -735,37 +728,37 @@ static void TestTemplateTypes() {
   { ns::T_1<ns::T_1<int>> _; }
 
   { T_1<int>::myint _ = 0; }
-  { T_1<int*>::myint _ = 0; }
-  { T_1<int**>::myint _ = 0; }
-  { T_1<int&>::myint _ = 0; }
-  { T_1<int*&>::myint _ = 0; }
+  { T_1<int *>::myint _ = 0; }
+  { T_1<int **>::myint _ = 0; }
+  { T_1<int &>::myint _ = 0; }
+  { T_1<int *&>::myint _ = 0; }
   { T_1<T_1<int>>::myint _ = 0; }
   { T_1<T_1<T_1<int>>>::myint _ = 0; }
-  { T_1<T_1<int*>>::myint _ = 0; }
-  { T_1<T_1<int**>>::myint _ = 0; }
-  { T_1<T_1<int&>>::myint _ = 0; }
-  { T_1<T_1<int*&>>::myint _ = 0; }
+  { T_1<T_1<int *>>::myint _ = 0; }
+  { T_1<T_1<int **>>::myint _ = 0; }
+  { T_1<T_1<int &>>::myint _ = 0; }
+  { T_1<T_1<int *&>>::myint _ = 0; }
 
   { T_2<int, char>::myint _ = 0; }
-  { T_2<int*, char&>::myint _ = 0; }
-  { T_2<int&, char*>::myint _ = 0; }
+  { T_2<int *, char &>::myint _ = 0; }
+  { T_2<int &, char *>::myint _ = 0; }
   { T_2<T_1<T_1<int>>, T_1<char>>::myint _ = 0; }
 
   { ns::T_1<int>::myint _ = 0; }
-  { ns::T_1<int*>::myint _ = 0; }
-  { ns::T_1<int**>::myint _ = 0; }
-  { ns::T_1<int&>::myint _ = 0; }
-  { ns::T_1<int*&>::myint _ = 0; }
+  { ns::T_1<int *>::myint _ = 0; }
+  { ns::T_1<int **>::myint _ = 0; }
+  { ns::T_1<int &>::myint _ = 0; }
+  { ns::T_1<int *&>::myint _ = 0; }
   { ns::T_1<T_1<int>>::myint _ = 0; }
-  { ns::T_1<T_1<int*>>::myint _ = 0; }
-  { ns::T_1<T_1<int**>>::myint _ = 0; }
-  { ns::T_1<T_1<int&>>::myint _ = 0; }
-  { ns::T_1<T_1<int*&>>::myint _ = 0; }
+  { ns::T_1<T_1<int *>>::myint _ = 0; }
+  { ns::T_1<T_1<int **>>::myint _ = 0; }
+  { ns::T_1<T_1<int &>>::myint _ = 0; }
+  { ns::T_1<T_1<int *&>>::myint _ = 0; }
   { ns::T_1<ns::T_1<int>>::myint _ = 0; }
-  { ns::T_1<ns::T_1<int*>>::myint _ = 0; }
-  { ns::T_1<ns::T_1<int**>>::myint _ = 0; }
-  { ns::T_1<ns::T_1<int&>>::myint _ = 0; }
-  { ns::T_1<ns::T_1<int*&>>::myint _ = 0; }
+  { ns::T_1<ns::T_1<int *>>::myint _ = 0; }
+  { ns::T_1<ns::T_1<int **>>::myint _ = 0; }
+  { ns::T_1<ns::T_1<int &>>::myint _ = 0; }
+  { ns::T_1<ns::T_1<int *&>>::myint _ = 0; }
 
   (void)T_1<double>::cx;
   (void)ns::T_1<double>::cx;
@@ -777,15 +770,13 @@ static void TestTemplateTypes() {
   // BREAK(TestTemplateCpp11)
 }
 
-template <typename T, typename TAllocator>
-struct TArray {
+template <typename T, typename TAllocator> struct TArray {
   using ElementType = T;
   T t_;
   TAllocator a_;
 };
 
-template <int Size>
-struct Allocator {
+template <int Size> struct Allocator {
   int size = Size;
 };
 
@@ -793,7 +784,7 @@ void TestTemplateWithNumericArguments() {
   Allocator<4> a4;
   Allocator<8> a8;
   TArray<int, Allocator<4>> arr;
-  decltype(arr)::ElementType* el = 0;
+  decltype(arr)::ElementType *el = 0;
 
   // BREAK(TestTemplateWithNumericArguments)
 }
@@ -801,25 +792,25 @@ void TestTemplateWithNumericArguments() {
 namespace test_scope {
 
 class Value {
- public:
+public:
   Value(int x, float y) : x_(x), y_(y) {}
 
   // Static members
   enum ValueEnum { A, B };
   static double static_var;
 
- private:
+private:
   int x_;
   float y_;
 };
 
 double Value::static_var = 3.5;
 
-}  // namespace test_scope
+} // namespace test_scope
 
 void TestValueScope() {
   test_scope::Value var(1, 2.5f);
-  test_scope::Value& var_ref = var;
+  test_scope::Value &var_ref = var;
   uint64_t z_ = 3;
 
   // "raw" representation of the Value.
@@ -869,7 +860,7 @@ void TestBitField() {
   };
 
   uint32_t data = ~0;
-  AlignedBitFieldStruct abf = (AlignedBitFieldStruct&)data;
+  AlignedBitFieldStruct abf = (AlignedBitFieldStruct &)data;
 
   // BREAK(TestBitField)
   // BREAK(TestBitFieldPromotion)
@@ -879,7 +870,7 @@ void TestBitField() {
 void TestContextVariables() {
   struct Scope {
     int a = 10;
-    const char* ptr = "hello";
+    const char *ptr = "hello";
   };
 
   Scope s;
@@ -917,8 +908,8 @@ void TestUnscopedEnum() {
   auto enum_one = UnscopedEnum::kOne;
   auto enum_two = UnscopedEnum::kTwo;
 
-  auto& enum_one_ref = enum_one;
-  auto& enum_two_ref = enum_two;
+  auto &enum_one_ref = enum_one;
+  auto &enum_two_ref = enum_two;
 
   auto enum_zero_u8 = UnscopedEnumUInt8::kZeroU8;
   auto enum_one_u8 = UnscopedEnumUInt8::kOneU8;
@@ -937,7 +928,7 @@ void TestUnscopedEnum() {
 
 void TestTernaryOperator() {
   int i = 1;
-  int* pi = &i;
+  int *pi = &i;
   char c = 2;
   int arr2[2] = {1, 2};
   int arr3[3] = {1, 2, 3};
@@ -951,7 +942,7 @@ void TestTernaryOperator() {
 
 void TestSizeOf() {
   int i = 1;
-  int* p = &i;
+  int *p = &i;
   int arr[] = {1, 2, 3};
 
   struct SizeOfFoo {
@@ -968,8 +959,8 @@ void TestBuiltinFunction_Log2() {
   enum CEnum { kFoo = 129 } c_enum = kFoo;
   enum class CxxEnum { kFoo = 129 } cxx_enum = CxxEnum::kFoo;
 
-  CEnum& c_enum_ref = c_enum;
-  CxxEnum& cxx_enum_ref = cxx_enum;
+  CEnum &c_enum_ref = c_enum;
+  CxxEnum &cxx_enum_ref = cxx_enum;
 
   // BREAK(TestBuiltinFunction_Log2)
 }
@@ -977,10 +968,10 @@ void TestBuiltinFunction_Log2() {
 void TestBuiltinFunction_findnonnull() {
   uint8_t array_of_uint8[] = {1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
                               0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1};
-  uint8_t* pointer_to_uint8 = array_of_uint8;
+  uint8_t *pointer_to_uint8 = array_of_uint8;
 
-  int* array_of_pointers[] = {(int*)1, (int*)1, (int*)0, (int*)0, (int*)1};
-  int** pointer_to_pointers = array_of_pointers;
+  int *array_of_pointers[] = {(int *)1, (int *)1, (int *)0, (int *)0, (int *)1};
+  int **pointer_to_pointers = array_of_pointers;
 
   // BREAK(TestBuiltinFunction_findnonnull)
 }
@@ -1000,8 +991,8 @@ void TestDereferencedType() {
   using TPair = TTuple;
 
   TPair p{};
-  const TPair& p_ref = p;
-  const TPair* p_ptr = &p;
+  const TPair &p_ref = p;
+  const TPair *p_ptr = &p;
 
   // BREAK(TestDereferencedType)
 }
@@ -1020,7 +1011,7 @@ void TestMemberFunctionCall() {
 void TestCompositeAssignment() {
   int i = 10;
   float f = 1.5f;
-  float* p = &f;
+  float *p = &f;
 
   enum Enum { ONE, TWO };
   Enum eOne = ONE;
@@ -1039,7 +1030,7 @@ void TestCompositeAssignment() {
 void TestSideEffects() {
   int x = 1;
   int xa[] = {1, 2};
-  int* p = &x;
+  int *p = &x;
 
   // BREAK(TestSideEffects)
 }
@@ -1056,7 +1047,9 @@ void TestUniquePtr() {
   auto ptr_int = std::make_unique<int>(1);
   auto ptr_float = std::make_unique<float>(1.1f);
 
-  auto deleter = [](void const* data) { delete static_cast<int const*>(data); };
+  auto deleter = [](void const *data) {
+    delete static_cast<int const *>(data);
+  };
   std::unique_ptr<void, decltype(deleter)> ptr_void(new int(42), deleter);
 
   // BREAK(TestUniquePtr)
@@ -1087,18 +1080,18 @@ void TestSharedPtr() {
 
 void TestTypeComparison() {
   int i = 1;
-  int const* const icpc = &i;
-  int* ip = &i;
-  int const* const* const icpcpc = &icpc;
-  int** ipp = &ip;
+  int const *const icpc = &i;
+  int *ip = &i;
+  int const *const *const icpcpc = &icpc;
+  int **ipp = &ip;
 
   using MyInt = int;
-  using MyPtr = MyInt*;
-  MyPtr* mipp = ipp;
+  using MyPtr = MyInt *;
+  MyPtr *mipp = ipp;
 
   using MyConstInt = const int;
-  using MyConstPtr = MyConstInt* const;
-  MyConstPtr* const micpcpc = icpcpc;
+  using MyConstPtr = MyConstInt *const;
+  MyConstPtr *const micpcpc = icpcpc;
 
   char c = 2;
   signed char sc = 65;
@@ -1128,7 +1121,7 @@ static void TestTypeVsIdentifier() {
   short StructOrVar = 2;
 
   class ClassOrVar {
-   public:
+  public:
     int x = 3;
   };
   ClassOrVar ClassOrVar;
@@ -1250,6 +1243,6 @@ void main() {
   // BREAK HERE
 }
 
-}  // namespace test_binary
+} // namespace test_binary
 
 int main() { test_binary::main(); }

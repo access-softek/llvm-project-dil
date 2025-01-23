@@ -1155,8 +1155,9 @@ lldb::SBValue SBFrame::EvaluateExpression(const char *expr,
   return expr_result;
 }
 
-lldb::SBValue SBFrame::EvaluateExpressionViaDIL(const char *expr,
-                                                lldb::DynamicValueType use_dynamic) {
+lldb::SBValue
+SBFrame::EvaluateExpressionViaDIL(const char *expr,
+                                  lldb::DynamicValueType use_dynamic) {
   LLDB_INSTRUMENT_VA(this, expr);
   Log *expr_log = GetLog(LLDBLog::Expressions);
   SBValue expr_result;
@@ -1181,20 +1182,23 @@ lldb::SBValue SBFrame::EvaluateExpressionViaDIL(const char *expr,
           StreamString frame_description;
           frame->DumpUsingSettingsFormat(&frame_description);
           stack_trace = std::make_unique<llvm::PrettyStackTraceFormat>(
-              "SBFrame::EvaluateExpressionViaDIL (expr = \"%s\", fetch_dynamic_value "
+              "SBFrame::EvaluateExpressionViaDIL (expr = \"%s\", "
+              "fetch_dynamic_value "
               "= %u) %s",
               expr, options.GetFetchDynamicValue(),
               frame_description.GetData());
         }
         VariableSP var_sp;
         Status error;
-        expr_value_sp = frame->GetValueForVariableExpressionPath( // DIL in ths branch
-            expr, use_dynamic,
-            StackFrame::eExpressionPathOptionCheckPtrVsMember |
-            StackFrame::eExpressionPathOptionsAllowDirectIVarAccess,
-            var_sp, error);
+        expr_value_sp =
+            frame->GetValueForVariableExpressionPath( // DIL in ths branch
+                expr, use_dynamic,
+                StackFrame::eExpressionPathOptionCheckPtrVsMember |
+                    StackFrame::eExpressionPathOptionsAllowDirectIVarAccess,
+                var_sp, error);
         if (!error.Success()) {
-          expr_value_sp = ValueObjectConstResult::Create(nullptr, std::move(error));
+          expr_value_sp =
+              ValueObjectConstResult::Create(nullptr, std::move(error));
           expr_result.SetSP(expr_value_sp, false);
         } else {
           expr_result.SetSP(expr_value_sp, options.GetFetchDynamicValue());
@@ -1208,10 +1212,10 @@ lldb::SBValue SBFrame::EvaluateExpressionViaDIL(const char *expr,
       expr_result.SetSP(expr_value_sp, false);
     }
   } else {
-      Status error;
-      error = Status::FromErrorString("sbframe object is not valid.");
-      expr_value_sp = ValueObjectConstResult::Create(nullptr, std::move(error));
-      expr_result.SetSP(expr_value_sp, false);
+    Status error;
+    error = Status::FromErrorString("sbframe object is not valid.");
+    expr_value_sp = ValueObjectConstResult::Create(nullptr, std::move(error));
+    expr_result.SetSP(expr_value_sp, false);
   }
   if (expr_result.GetError().Success())
     LLDB_LOGF(expr_log,
@@ -1219,10 +1223,11 @@ lldb::SBValue SBFrame::EvaluateExpressionViaDIL(const char *expr,
               "%s, summary %s **",
               expr_result.GetValue(), expr_result.GetSummary());
   else
-    LLDB_LOGF(expr_log,
-              "** [SBFrame::EvaluateExpressionViaDIL] Expression evaluation failed: "
-              "%s **",
-              expr_result.GetError().GetCString());
+    LLDB_LOGF(
+        expr_log,
+        "** [SBFrame::EvaluateExpressionViaDIL] Expression evaluation failed: "
+        "%s **",
+        expr_result.GetError().GetCString());
   return expr_result;
 }
 

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 #ifndef LLDB_DIL_RUNNER_H_
 #define LLDB_DIL_RUNNER_H_
 
@@ -22,8 +21,8 @@
 #include "lldb/API/SBProcess.h"
 
 lldb::SBProcess LaunchTestProgram(lldb::SBDebugger debugger,
-                                  const std::string& source_path,
-                                  const std::string& binary_path,
-                                  const std::string& break_line);
+                                  const std::string &source_path,
+                                  const std::string &binary_path,
+                                  const std::string &break_line);
 
-#endif  // LLDB_DIL_RUNNER_H_
+#endif // LLDB_DIL_RUNNER_H_

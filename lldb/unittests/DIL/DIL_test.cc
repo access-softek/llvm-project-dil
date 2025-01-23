@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 /// DIL
 // Removed for now:
-// * All tests with context variables evaluation: need to implement an call interface to DIL
-// * All tests with evaluation with scope: need to implement an call interface to DIL
-// * Some tests that crash the test suite completely: some of the tests that involve nullptr
-
+// * All tests with context variables evaluation: need to implement an call
+//   interface to DIL
+// * All tests with evaluation with scope: need to implement an call interface
+//   to DIL
+// * Some tests that crash the test suite completely: some of the tests that
+//   involve nullptr
 
 #include "lldb/lldb-enumerations.h"
 #ifndef __EMSCRIPTEN__
@@ -57,8 +58,8 @@ struct EvalResult {
   mutable lldb::SBValue lldb_DIL_value;
   mutable std::optional<lldb::SBValue> lldb_value;
 
-  friend std::ostream& operator<<(std::ostream& os, const EvalResult& result) {
-    auto maybe_null = [](const char* str) {
+  friend std::ostream &operator<<(std::ostream &os, const EvalResult &result) {
+    auto maybe_null = [](const char *str) {
       return str == nullptr ? "NULL" : str;
     };
 
@@ -74,14 +75,14 @@ struct EvalResult {
 };
 
 class EvaluatorHelper {
- public:
+public:
   EvaluatorHelper(lldb::SBFrame frame, bool lldb, bool side_effects)
       : frame_(frame), lldb_(lldb), side_effects_(side_effects) {}
   EvaluatorHelper(lldb::SBValue scope, bool lldb, bool side_effects)
       : scope_(scope), lldb_(lldb), side_effects_(side_effects) {}
 
- public:
-  EvalResult Eval(const std::string& expr) {
+public:
+  EvalResult Eval(const std::string &expr) {
     EvalResult ret;
 
     // lldb_eval::Options opts;
@@ -98,7 +99,8 @@ class EvaluatorHelper {
       // }
     } else {
       // Evaluate in the frame context.
-      ret.lldb_DIL_value = frame_.EvaluateExpressionViaDIL(expr.c_str(), lldb::eNoDynamicValues);
+      ret.lldb_DIL_value =
+          frame_.EvaluateExpressionViaDIL(expr.c_str(), lldb::eNoDynamicValues);
       if (!ret.lldb_DIL_value.GetError().Success())
         ret.lldb_DIL_error = ret.lldb_DIL_value.GetError();
       // ret.lldb_DIL_value = lldb_eval::EvaluateExpression(
@@ -167,7 +169,8 @@ class EvaluatorHelper {
   //   for (const auto& [name, value] : vars) {
   //     ctx_vec.push_back({name.c_str(), value});
   //   }
-  //   lldb_eval::ContextVariableList context_vars{ctx_vec.data(), ctx_vec.size()};
+  //   lldb_eval::ContextVariableList context_vars{ctx_vec.data(),
+  //   ctx_vec.size()};
 
   //   EvalResult ret;
   //   ret.lldb_DIL_value = lldb_eval::EvaluateExpression(
@@ -205,7 +208,7 @@ class EvaluatorHelper {
   //                                       expr.c_str(), opts, error);
   // }
 
- private:
+private:
   lldb::SBFrame frame_;
   lldb::SBValue scope_;
   bool lldb_;
@@ -213,8 +216,8 @@ class EvaluatorHelper {
 };
 #endif
 
-void PrintError(::testing::MatchResultListener* listener,
-                const std::string& error) {
+void PrintError(::testing::MatchResultListener *listener,
+                const std::string &error) {
   *listener << "error:";
   // Print multiline errors on a separate line.
   if (error.find('\n') != std::string::npos) {
@@ -227,11 +230,11 @@ void PrintError(::testing::MatchResultListener* listener,
 
 #ifndef __EMSCRIPTEN__
 class IsOkMatcher : public MatcherInterface<EvalResult> {
- public:
+public:
   explicit IsOkMatcher(bool compare_types) : compare_types_(compare_types) {}
 
   bool MatchAndExplain(EvalResult result,
-                       MatchResultListener* listener) const override {
+                       MatchResultListener *listener) const override {
     if (result.lldb_DIL_error.GetError()) {
       PrintError(listener, result.lldb_DIL_error.GetCString());
       return false;
@@ -255,9 +258,9 @@ class IsOkMatcher : public MatcherInterface<EvalResult> {
       }
 
       if (compare_types_) {
-        const char* lldb_DIL_type =
+        const char *lldb_DIL_type =
             result.lldb_DIL_value.GetType().GetUnqualifiedType().GetName();
-        const char* lldb_type =
+        const char *lldb_type =
             result.lldb_value.value().GetType().GetUnqualifiedType().GetName();
         if (strcmp(lldb_DIL_type, lldb_type) != 0) {
           *listener << "types produced by DIL and LLDB don't match\n"
@@ -271,11 +274,11 @@ class IsOkMatcher : public MatcherInterface<EvalResult> {
     return true;
   }
 
-  void DescribeTo(std::ostream* os) const override {
+  void DescribeTo(std::ostream *os) const override {
     *os << "evaluates without an error and equals to LLDB";
   }
 
- private:
+private:
   bool compare_types_;
 };
 #endif
@@ -286,13 +289,13 @@ Matcher<EvalResult> IsOk(bool compare_types = true) {
 
 #ifndef __EMSCRIPTEN__
 class IsEqualMatcher : public MatcherInterface<EvalResult> {
- public:
+public:
   IsEqualMatcher(std::string value, bool compare_types)
       : value_(std::move(value)), compare_types_(compare_types) {}
 
- public:
+public:
   bool MatchAndExplain(EvalResult result,
-                       MatchResultListener* listener) const override {
+                       MatchResultListener *listener) const override {
     if (result.lldb_DIL_error.GetError()) {
       PrintError(listener, result.lldb_DIL_error.GetCString());
       return false;
@@ -321,9 +324,9 @@ class IsEqualMatcher : public MatcherInterface<EvalResult> {
       }
 
       if (compare_types_) {
-        const char* lldb_DIL_type =
+        const char *lldb_DIL_type =
             result.lldb_DIL_value.GetType().GetUnqualifiedType().GetName();
-        const char* lldb_type =
+        const char *lldb_type =
             result.lldb_value.value().GetType().GetUnqualifiedType().GetName();
         if (strcmp(lldb_DIL_type, lldb_type) != 0) {
           *listener << "types produced by DIL and LLDB don't match\n"
@@ -337,11 +340,11 @@ class IsEqualMatcher : public MatcherInterface<EvalResult> {
     return true;
   }
 
-  void DescribeTo(std::ostream* os) const override {
+  void DescribeTo(std::ostream *os) const override {
     *os << "evaluates to '" << value_ << "'";
   }
 
- private:
+private:
   std::string value_;
   bool compare_types_;
 };
@@ -353,12 +356,12 @@ Matcher<EvalResult> IsEqual(std::string value, bool compare_types = true) {
 
 #ifndef __EMSCRIPTEN__
 class IsErrorMatcher : public MatcherInterface<EvalResult> {
- public:
+public:
   explicit IsErrorMatcher(std::string value) : value_(std::move(value)) {}
 
- public:
+public:
   bool MatchAndExplain(EvalResult result,
-                       MatchResultListener* listener) const override {
+                       MatchResultListener *listener) const override {
     if (!result.lldb_DIL_error.GetError()) {
       *listener << "evaluated to '" << result.lldb_DIL_value.GetValue() << "'";
       return false;
@@ -372,11 +375,11 @@ class IsErrorMatcher : public MatcherInterface<EvalResult> {
     return true;
   }
 
-  void DescribeTo(std::ostream* os) const override {
+  void DescribeTo(std::ostream *os) const override {
     *os << "evaluates with an error: '" << value_ << "'";
   }
 
- private:
+private:
   std::string value_;
 };
 #endif
@@ -387,26 +390,23 @@ Matcher<EvalResult> IsError(std::string value) {
 
 #ifndef __EMSCRIPTEN__
 class EvalTest : public ::testing::Test {
- protected:
-  static void SetUpTestSuite() {
-    lldb::SBDebugger::Initialize();
-  }
+protected:
+  static void SetUpTestSuite() { lldb::SBDebugger::Initialize(); }
 
-  static void TearDownTestSuite() {
-    lldb::SBDebugger::Terminate();
-  }
+  static void TearDownTestSuite() { lldb::SBDebugger::Terminate(); }
 
   void SetUp() {
     std::string test_name =
         ::testing::UnitTest::GetInstance()->current_test_info()->name();
     std::string break_line = "// BREAK(" + test_name + ")";
 
-    std::string binary_path = lldb_private::GetInputFilePath("test_binary_libc++.bin");
+    std::string binary_path =
+        lldb_private::GetInputFilePath("test_binary_libc++.bin");
     std::string source_path = lldb_private::GetInputFilePath("test_binary.cc");
 
     debugger_ = lldb::SBDebugger::Create(false);
-    process_ = LaunchTestProgram(debugger_, source_path, binary_path,
-                                            break_line);
+    process_ =
+        LaunchTestProgram(debugger_, source_path, binary_path, break_line);
     frame_ = process_.GetSelectedThread().GetSelectedFrame();
   }
 
@@ -415,7 +415,7 @@ class EvalTest : public ::testing::Test {
     lldb::SBDebugger::Destroy(debugger_);
   }
 
-  EvalResult Eval(const std::string& expr) {
+  EvalResult Eval(const std::string &expr) {
     return EvaluatorHelper(frame_, compare_with_lldb_, allow_side_effects_)
         .Eval(expr);
   }
@@ -430,7 +430,8 @@ class EvalTest : public ::testing::Test {
   // EvaluatorHelper Scope(std::string scope) {
   //   // Resolve the scope variable (assume it's a local variable).
   //   lldb::SBValue scope_var = frame_.FindVariable(scope.c_str());
-  //   return EvaluatorHelper(scope_var, compare_with_lldb_, allow_side_effects_);
+  //   return EvaluatorHelper(scope_var, compare_with_lldb_,
+  //   allow_side_effects_);
   // }
 
   bool CreateContextVariable(std::string type, std::string name, bool is_array,
@@ -461,7 +462,7 @@ class EvalTest : public ::testing::Test {
     return false;
   }
 
- protected:
+protected:
   lldb::SBDebugger debugger_;
   lldb::SBProcess process_;
   lldb::SBFrame frame_;
@@ -1069,13 +1070,13 @@ TEST_F(EvalTest, TestMemberOfAnonymousMember) {
 }
 
 TEST_F(EvalTest, TestGlobalVariableLookup) {
-  EXPECT_THAT(Eval("globalVar"), IsEqual("-559038737"));  // 0xDEADBEEF
+  EXPECT_THAT(Eval("globalVar"), IsEqual("-559038737")); // 0xDEADBEEF
   EXPECT_THAT(Eval("globalPtr"), IsOk());
   EXPECT_THAT(Eval("globalRef"), IsEqual("-559038737"));
   EXPECT_THAT(Eval("::globalPtr"), IsOk());
   EXPECT_THAT(Eval("::globalRef"), IsEqual("-559038737"));
 
-  EXPECT_THAT(Eval("externGlobalVar"), IsEqual("12648430"));  // 0x00C0FFEE
+  EXPECT_THAT(Eval("externGlobalVar"), IsEqual("12648430")); // 0x00C0FFEE
   EXPECT_THAT(Eval("::externGlobalVar"), IsEqual("12648430"));
 
   EXPECT_THAT(Eval("ns::globalVar"), IsEqual("13"));
@@ -1414,11 +1415,13 @@ TEST_F(EvalTest, TestCStyleCastPointer) {
 
   // EXPECT_THAT(
   //     Eval("(nullptr_t)1"),
-  //     IsError("C-style cast from 'int' to 'nullptr_t' (canonically referred to as 'std::nullptr_t')"
+  //     IsError("C-style cast from 'int' to 'nullptr_t' (canonically referred
+  //     to as 'std::nullptr_t')"
   //             " is not allowed"));
   // EXPECT_THAT(
   //     Eval("(nullptr_t)ap"),
-  //     IsError("C-style cast from 'int *' to 'nullptr_t' (canonically referred to as 'std::nullptr_t')"
+  //     IsError("C-style cast from 'int *' to 'nullptr_t' (canonically referred
+  //     to as 'std::nullptr_t')"
   //             " is not allowed"));
 }
 
@@ -1428,7 +1431,8 @@ TEST_F(EvalTest, TestCStyleCastPointer) {
 //   } else {
 //     EXPECT_THAT(
 //         Eval("(int)nullptr"),
-//         IsError("cast from pointer to smaller type 'int' loses information"));
+//         IsError("cast from pointer to smaller type 'int' loses
+//         information"));
 //   }
 //   EXPECT_THAT(Eval("(uint64_t)nullptr"), IsEqual("0"));
 
@@ -1551,11 +1555,13 @@ TEST_F(EvalTest, TestCxxStaticCast) {
 
   // EXPECT_THAT(
   //     Eval("static_cast<nullptr_t>((int)0)"),
-  //     IsError("static_cast from 'int' to 'nullptr_t' (canonically referred to as 'std::nullptr_t')"
+  //     IsError("static_cast from 'int' to 'nullptr_t' (canonically referred to
+  //     as 'std::nullptr_t')"
   //             " is not allowed"));
   // EXPECT_THAT(
   //     Eval("static_cast<nullptr_t>((void*)0)"),
-  //     IsError("static_cast from 'void *' to 'nullptr_t' (canonically referred to as 'std::nullptr_t')"
+  //     IsError("static_cast from 'void *' to 'nullptr_t' (canonically referred
+  //     to as 'std::nullptr_t')"
   //             " is not allowed"));
 
   // Cast to references.
@@ -1741,7 +1747,7 @@ TEST_F(EvalTest, TestCxxReinterpretCast) {
               IsEqual(Is32Bit() ? "0x00000001" : "0x0000000200000001"));
   EXPECT_THAT(Eval("*reinterpret_cast<int*>(arr)"), IsEqual("1"));
   EXPECT_THAT(Eval("*reinterpret_cast<long long*>(arr)"),
-              IsEqual("8589934593"));  // 8589934593 == 0x0000000200000001
+              IsEqual("8589934593")); // 8589934593 == 0x0000000200000001
 
   // Casting to nullptr_t or nullptr_t to pointer types isn't allowed.
   // EXPECT_THAT(
@@ -1751,19 +1757,23 @@ TEST_F(EvalTest, TestCxxReinterpretCast) {
   // EXPECT_THAT(
   //     Eval("reinterpret_cast<nullptr_t>(ptr)"),
   //     IsError("reinterpret_cast from 'int *' to 'nullptr_t' "
-  //             "(canonically referred to as 'std::nullptr_t') is not allowed"));
+  //             "(canonically referred to as 'std::nullptr_t') is not
+  //             allowed"));
   // EXPECT_THAT(Eval("reinterpret_cast<nullptr_t>(0)"),
   //             IsError("reinterpret_cast from 'int' to 'nullptr_t' "
-  //                     "(canonically referred to as 'std::nullptr_t') is not allowed"));
+  //                     "(canonically referred to as 'std::nullptr_t') is not
+  //                     allowed"));
   // EXPECT_THAT(Eval("reinterpret_cast<nullptr_t>(nullptr)"),
-  //             IsError("reinterpret_cast from 'std::nullptr_t' to 'nullptr_t' "
-  //                     "(canonically referred to as 'std::nullptr_t') is not allowed"));
+  //             IsError("reinterpret_cast from 'std::nullptr_t' to 'nullptr_t'
+  //             "
+  //                     "(canonically referred to as 'std::nullptr_t') is not
+  //                     allowed"));
 
   // L-values can be converted to reference type.
   EXPECT_THAT(Eval("reinterpret_cast<CxxBase&>(arr[0]).a"), IsEqual("1"));
   EXPECT_THAT(Eval("reinterpret_cast<CxxBase&>(arr).b"), IsEqual("2"));
   EXPECT_THAT(Eval("reinterpret_cast<CxxParent&>(arr[0]).c"),
-              IsEqual("17179869187"));  // 17179869187 == 0x0000000400000003
+              IsEqual("17179869187")); // 17179869187 == 0x0000000400000003
   EXPECT_THAT(Eval("reinterpret_cast<CxxParent&>(arr).d"), IsEqual("5"));
   EXPECT_THAT(Eval("reinterpret_cast<int&>(parent)"), IsOk());
   EXPECT_THAT(Eval("reinterpret_cast<td_int_ref_t>(ptr)"), IsOk());
@@ -1810,14 +1820,16 @@ TEST_F(EvalTest, DISABLED_TestStaticConstDeclaredInline) {
   EXPECT_THAT(Eval("Vars::inline_static"), IsEqual("7.5"));
   EXPECT_THAT(Eval("Vars::static_constexpr"), IsEqual("8"));
 
-// #ifndef __EMSCRIPTEN__
-//   EXPECT_THAT(Scope("outer_inner_vars").Eval("inline_static"), IsEqual("1.5"));
-//   EXPECT_THAT(Scope("outer_inner_vars").Eval("static_constexpr"), IsEqual("2"));
-//   EXPECT_THAT(Scope("outer_vars").Eval("inline_static"), IsEqual("4.5"));
-//   EXPECT_THAT(Scope("outer_vars").Eval("static_constexpr"), IsEqual("5"));
-//   EXPECT_THAT(Scope("vars").Eval("inline_static"), IsEqual("7.5"));
-//   EXPECT_THAT(Scope("vars").Eval("inline_static"), IsEqual("8"));
-// #endif
+  // #ifndef __EMSCRIPTEN__
+  //   EXPECT_THAT(Scope("outer_inner_vars").Eval("inline_static"),
+  //   IsEqual("1.5"));
+  //   EXPECT_THAT(Scope("outer_inner_vars").Eval("static_constexpr"),
+  //   IsEqual("2")); EXPECT_THAT(Scope("outer_vars").Eval("inline_static"),
+  //   IsEqual("4.5"));
+  //   EXPECT_THAT(Scope("outer_vars").Eval("static_constexpr"), IsEqual("5"));
+  //   EXPECT_THAT(Scope("vars").Eval("inline_static"), IsEqual("7.5"));
+  //   EXPECT_THAT(Scope("vars").Eval("inline_static"), IsEqual("8"));
+  // #endif
 }
 
 TEST_F(EvalTest, TestStaticConstDeclaredOutsideTheClass) {
@@ -1841,37 +1853,43 @@ TEST_F(EvalTest, TestStaticConstDeclaredOutsideTheClass) {
   EXPECT_THAT(Eval("::Vars::Nested::static_const"), IsEqual("30"));
   EXPECT_THAT(Eval("Vars::Nested::static_const"), IsEqual("30"));
 
-// #ifndef __EMSCRIPTEN__
-//   EXPECT_THAT(Scope("outer_inner_vars").Eval("static_const"), IsEqual("3"));
-//   EXPECT_THAT(Scope("outer_vars").Eval("static_const"), IsEqual("6"));
-//   EXPECT_THAT(Scope("vars").Eval("static_const"), IsEqual("9"));
+  // #ifndef __EMSCRIPTEN__
+  //   EXPECT_THAT(Scope("outer_inner_vars").Eval("static_const"),
+  //   IsEqual("3")); EXPECT_THAT(Scope("outer_vars").Eval("static_const"),
+  //   IsEqual("6")); EXPECT_THAT(Scope("vars").Eval("static_const"),
+  //   IsEqual("9"));
 
-//   EXPECT_THAT(Scope("outer_inner_vars").Eval("Nested::static_const"),
-//               IsEqual("10"));
-//   EXPECT_THAT(Scope("outer_vars").Eval("Nested::static_const"), IsEqual("20"));
-//   EXPECT_THAT(Scope("vars").Eval("Nested::static_const"), IsEqual("30"));
+  //   EXPECT_THAT(Scope("outer_inner_vars").Eval("Nested::static_const"),
+  //               IsEqual("10"));
+  //   EXPECT_THAT(Scope("outer_vars").Eval("Nested::static_const"),
+  //   IsEqual("20")); EXPECT_THAT(Scope("vars").Eval("Nested::static_const"),
+  //   IsEqual("30"));
 
-//   EXPECT_THAT(Scope("vars").Eval("::static_const"),
-//               IsError("use of undeclared identifier '::static_const'"));
-//   EXPECT_THAT(Scope("vars").Eval("::Nested::static_const"),
-//               IsError("use of undeclared identifier '::Nested::static_const'"));
+  //   EXPECT_THAT(Scope("vars").Eval("::static_const"),
+  //               IsError("use of undeclared identifier '::static_const'"));
+  //   EXPECT_THAT(Scope("vars").Eval("::Nested::static_const"),
+  //               IsError("use of undeclared identifier
+  //               '::Nested::static_const'"));
 
-//   // Evaluate in value context where value is of alised type.
-//   EXPECT_THAT(Scope("my_outer_inner_vars").Eval("static_const"), IsEqual("3"));
-//   EXPECT_THAT(Scope("my_outer_vars").Eval("static_const"), IsEqual("6"));
-//   EXPECT_THAT(Scope("my_vars").Eval("static_const"), IsEqual("9"));
+  //   // Evaluate in value context where value is of alised type.
+  //   EXPECT_THAT(Scope("my_outer_inner_vars").Eval("static_const"),
+  //   IsEqual("3")); EXPECT_THAT(Scope("my_outer_vars").Eval("static_const"),
+  //   IsEqual("6")); EXPECT_THAT(Scope("my_vars").Eval("static_const"),
+  //   IsEqual("9"));
 
-//   EXPECT_THAT(Scope("my_outer_inner_vars").Eval("Nested::static_const"),
-//               IsEqual("10"));
-//   EXPECT_THAT(Scope("my_outer_vars").Eval("Nested::static_const"),
-//               IsEqual("20"));
-//   EXPECT_THAT(Scope("my_vars").Eval("Nested::static_const"), IsEqual("30"));
+  //   EXPECT_THAT(Scope("my_outer_inner_vars").Eval("Nested::static_const"),
+  //               IsEqual("10"));
+  //   EXPECT_THAT(Scope("my_outer_vars").Eval("Nested::static_const"),
+  //               IsEqual("20"));
+  //   EXPECT_THAT(Scope("my_vars").Eval("Nested::static_const"),
+  //   IsEqual("30"));
 
-//   EXPECT_THAT(Scope("my_outer_inner_vars").Eval("::static_const"),
-//               IsError("use of undeclared identifier '::static_const'"));
-//   EXPECT_THAT(Scope("my_vars").Eval("::Nested::static_const"),
-//               IsError("use of undeclared identifier '::Nested::static_const'"));
-// #endif
+  //   EXPECT_THAT(Scope("my_outer_inner_vars").Eval("::static_const"),
+  //               IsError("use of undeclared identifier '::static_const'"));
+  //   EXPECT_THAT(Scope("my_vars").Eval("::Nested::static_const"),
+  //               IsError("use of undeclared identifier
+  //               '::Nested::static_const'"));
+  // #endif
 }
 
 TEST_F(EvalTest, TestBasicTypeDeclaration) {
@@ -2055,10 +2073,13 @@ TEST_F(EvalTest, TestTemplateTypes) {
     EXPECT_THAT(Eval("(::ns::T_1<T_1<" + arg + "> >::myint)1.1"), IsEqual("1"));
   }
 
-  EXPECT_THAT(Eval("(ns::T_1<ns::T_1<int> >::myint)1.1"),
-              IsError("use of undeclared identifier 'ns::T_1<ns::T_1<int> >::myint'"));
-  EXPECT_THAT(Eval("(::ns::T_1<ns::T_1<int> >::myint)1.1"),
-              IsError("use of undeclared identifier '::ns::T_1<ns::T_1<int> >::myint'"));
+  EXPECT_THAT(
+      Eval("(ns::T_1<ns::T_1<int> >::myint)1.1"),
+      IsError("use of undeclared identifier 'ns::T_1<ns::T_1<int> >::myint'"));
+  EXPECT_THAT(
+      Eval("(::ns::T_1<ns::T_1<int> >::myint)1.1"),
+      IsError(
+          "use of undeclared identifier '::ns::T_1<ns::T_1<int> >::myint'"));
   for (std::string arg : {"int*", "int**", "int&", "int*&"}) {
     EXPECT_THAT(Eval("(ns::T_1<ns::T_1<" + arg + "> >::myint)1.1"),
                 IsError("use of undeclared identifier 'ns::T_1'"));
@@ -2086,8 +2107,8 @@ TEST_F(EvalTest, TestTemplateCpp11) {
               IsEqual("1.5"));
 
   // Here T_1 is a local variable.
-  EXPECT_THAT(Eval("T_1<2>1"), IsEqual("false"));   // (p < 2) > 1
-  EXPECT_THAT(Eval("T_1<2>>1"), IsEqual("false"));  // (p < 2) >> 1
+  EXPECT_THAT(Eval("T_1<2>1"), IsEqual("false"));  // (p < 2) > 1
+  EXPECT_THAT(Eval("T_1<2>>1"), IsEqual("false")); // (p < 2) >> 1
   // And here it's a template.
   EXPECT_THAT(Eval("T_1<int>::cx + 1"), IsEqual("25"));
 }
@@ -2119,7 +2140,8 @@ TEST_F(EvalTest, TestTemplateWithNumericArguments) {
 //   // Test for the "artificial" value, i.e. created by the expression.
 //   lldb::SBError error;
 //   lldb::SBValue scope_var =
-//       lldb_eval::EvaluateExpression(frame_, "(test_scope::Value&)bytes", error);
+//       lldb_eval::EvaluateExpression(frame_, "(test_scope::Value&)bytes",
+//       error);
 //   EXPECT_TRUE(scope_var.IsValid());
 //   EXPECT_TRUE(error.Success());
 
@@ -2134,10 +2156,12 @@ TEST_F(EvalTest, TestTemplateWithNumericArguments) {
 //   // In the frame context `this` is not available here.
 //   EXPECT_THAT(
 //       Eval("this->y_"),
-//       IsError("invalid use of 'this' outside of a non-static member function"));
+//       IsError("invalid use of 'this' outside of a non-static member
+//       function"));
 //   EXPECT_THAT(
 //       Eval("(*this)->y_"),
-//       IsError("invalid use of 'this' outside of a non-static member function"));
+//       IsError("invalid use of 'this' outside of a non-static member
+//       function"));
 
 //   EXPECT_THAT(Scope("var").Eval("this - (test_scope::Value*)this"),
 //               IsEqual("0"));
@@ -2157,7 +2181,8 @@ TEST_F(EvalTest, TestTemplateWithNumericArguments) {
 //   EXPECT_THAT(Scope("var_ref").Eval("ValueEnum::B"), IsEqual("B"));
 //   EXPECT_THAT(Scope("var_ref").Eval("static_var"), IsEqual("3.5"));
 //   EXPECT_THAT(Scope("var_ref").Eval("this->static_var"),
-//               IsError("no member named 'static_var' in 'test_scope::Value'"));
+//               IsError("no member named 'static_var' in
+//               'test_scope::Value'"));
 // }
 #endif
 
@@ -2166,45 +2191,45 @@ TEST_F(EvalTest, TestBitField) {
   EXPECT_THAT(Eval("bf.b"), IsEqual("9"));
   EXPECT_THAT(Eval("bf.c"), IsEqual("false"));
   EXPECT_THAT(Eval("bf.d"), IsEqual("true"));
-// #ifndef __EMSCRIPTEN__
-//   EXPECT_THAT(Scope("bf").Eval("a"), IsEqual("1023"));
-//   EXPECT_THAT(Scope("bf").Eval("b"), IsEqual("9"));
-//   EXPECT_THAT(Scope("bf").Eval("c"), IsEqual("false"));
-//   EXPECT_THAT(Scope("bf").Eval("d"), IsEqual("true"));
-// #endif
+  // #ifndef __EMSCRIPTEN__
+  //   EXPECT_THAT(Scope("bf").Eval("a"), IsEqual("1023"));
+  //   EXPECT_THAT(Scope("bf").Eval("b"), IsEqual("9"));
+  //   EXPECT_THAT(Scope("bf").Eval("c"), IsEqual("false"));
+  //   EXPECT_THAT(Scope("bf").Eval("d"), IsEqual("true"));
+  // #endif
 
   // Perform an operation to ensure we actually read the value.
   EXPECT_THAT(Eval("0 + bf.a"), IsEqual("1023"));
   EXPECT_THAT(Eval("0 + bf.b"), IsEqual("9"));
   EXPECT_THAT(Eval("0 + bf.c"), IsEqual("0"));
   EXPECT_THAT(Eval("0 + bf.d"), IsEqual("1"));
-// #ifndef __EMSCRIPTEN__
-//   EXPECT_THAT(Scope("bf").Eval("0 + a"), IsEqual("1023"));
-//   // TODO: Enable type comparison after fixing bitfield promotion in value
-//   // context.
-//   EXPECT_THAT(Scope("bf").Eval("0 + b"), IsEqual("9", /*compare_types*/ false));
-//   EXPECT_THAT(Scope("bf").Eval("0 + c"), IsEqual("0"));
-//   EXPECT_THAT(Scope("bf").Eval("0 + d"), IsEqual("1"));
-// #endif
+  // #ifndef __EMSCRIPTEN__
+  //   EXPECT_THAT(Scope("bf").Eval("0 + a"), IsEqual("1023"));
+  //   // TODO: Enable type comparison after fixing bitfield promotion in value
+  //   // context.
+  //   EXPECT_THAT(Scope("bf").Eval("0 + b"), IsEqual("9", /*compare_types*/
+  //   false)); EXPECT_THAT(Scope("bf").Eval("0 + c"), IsEqual("0"));
+  //   EXPECT_THAT(Scope("bf").Eval("0 + d"), IsEqual("1"));
+  // #endif
 
   EXPECT_THAT(Eval("abf.a"), IsEqual("1023"));
   EXPECT_THAT(Eval("abf.b"), IsEqual("'\\x0f'"));
   EXPECT_THAT(Eval("abf.c"), IsEqual("3"));
-// #ifndef __EMSCRIPTEN__
-//   EXPECT_THAT(Scope("abf").Eval("a"), IsEqual("1023"));
-//   EXPECT_THAT(Scope("abf").Eval("b"), IsEqual("'\\x0f'"));
-//   EXPECT_THAT(Scope("abf").Eval("c"), IsEqual("3"));
-// #endif
+  // #ifndef __EMSCRIPTEN__
+  //   EXPECT_THAT(Scope("abf").Eval("a"), IsEqual("1023"));
+  //   EXPECT_THAT(Scope("abf").Eval("b"), IsEqual("'\\x0f'"));
+  //   EXPECT_THAT(Scope("abf").Eval("c"), IsEqual("3"));
+  // #endif
 
   // Perform an operation to ensure we actually read the value.
   EXPECT_THAT(Eval("abf.a + 0"), IsEqual("1023"));
   EXPECT_THAT(Eval("abf.b + 0"), IsEqual("15"));
   EXPECT_THAT(Eval("abf.c + 0"), IsEqual("3"));
-// #ifndef __EMSCRIPTEN__
-//   EXPECT_THAT(Scope("abf").Eval("0 + a"), IsEqual("1023"));
-//   EXPECT_THAT(Scope("abf").Eval("0 + b"), IsEqual("15"));
-//   EXPECT_THAT(Scope("abf").Eval("0 + c"), IsEqual("3"));
-// #endif
+  // #ifndef __EMSCRIPTEN__
+  //   EXPECT_THAT(Scope("abf").Eval("0 + a"), IsEqual("1023"));
+  //   EXPECT_THAT(Scope("abf").Eval("0 + b"), IsEqual("15"));
+  //   EXPECT_THAT(Scope("abf").Eval("0 + c"), IsEqual("3"));
+  // #endif
 
   // Address-of is not allowed for bit-fields.
   EXPECT_THAT(Eval("&bf.a"), IsError("address of bit-field requested"));
@@ -2287,16 +2312,16 @@ TEST_F(EvalTest, TestBitFieldWithSideEffects) {
 
 // TEST_F(EvalTest, TestContextVariablesSubset) {
 //   // All context variables that are created in this test are visible by LLDB.
-//   // Disable comparisons with LLDB to test subsets of created context variables.
-//   this->compare_with_lldb_ = false;
+//   // Disable comparisons with LLDB to test subsets of created context
+//   variables. this->compare_with_lldb_ = false;
 
 //   EXPECT_TRUE(CreateContextVariable("$var", "13"));
 //   EXPECT_TRUE(CreateContextVariable("$ptr", "s.ptr"));
 
 //   // Evaluate without the context.
 //   EXPECT_THAT(Eval("$var"), IsError("use of undeclared identifier '$var'"));
-//   EXPECT_THAT(Eval("$var + 1"), IsError("use of undeclared identifier '$var'"));
-//   EXPECT_THAT(Scope("s").Eval("$var"),
+//   EXPECT_THAT(Eval("$var + 1"), IsError("use of undeclared identifier
+//   '$var'")); EXPECT_THAT(Scope("s").Eval("$var"),
 //               IsError("use of undeclared identifier '$var'"));
 //   EXPECT_THAT(Scope("s").Eval("$var + 1"),
 //               IsError("use of undeclared identifier '$var'"));
@@ -2724,43 +2749,44 @@ TEST_F(EvalTest, TestPrefixIncDec) {
   EXPECT_THAT(Eval("--i"),
               IsError("side effects are not supported in this context"));
 
-// #ifndef __EMSCRIPTEN__
-//   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
-//   EXPECT_THAT(EvalWithContext("++$arr", vars_),
-//               IsError("cannot increment value of type 'int[3]'"));
+  // #ifndef __EMSCRIPTEN__
+  //   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
+  //   EXPECT_THAT(EvalWithContext("++$arr", vars_),
+  //               IsError("cannot increment value of type 'int[3]'"));
 
-//   ASSERT_TRUE(CreateContextVariable("$enum_foo", "ScopedEnum::kFoo"));
-//   EXPECT_THAT(EvalWithContext("++$enum_foo", vars_),
-//               IsError("cannot increment expression of enum type 'ScopedEnum'"));
+  //   ASSERT_TRUE(CreateContextVariable("$enum_foo", "ScopedEnum::kFoo"));
+  //   EXPECT_THAT(EvalWithContext("++$enum_foo", vars_),
+  //               IsError("cannot increment expression of enum type
+  //               'ScopedEnum'"));
 
-//   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-//   EXPECT_THAT(EvalWithContext("++$i", vars_), IsEqual("2"));
-//   EXPECT_THAT(EvalWithContext("++$i + 1", vars_), IsEqual("4"));
-//   EXPECT_THAT(EvalWithContext("--$i", vars_), IsEqual("2"));
-//   EXPECT_THAT(EvalWithContext("--$i - 1", vars_), IsEqual("0"));
+  //   ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  //   EXPECT_THAT(EvalWithContext("++$i", vars_), IsEqual("2"));
+  //   EXPECT_THAT(EvalWithContext("++$i + 1", vars_), IsEqual("4"));
+  //   EXPECT_THAT(EvalWithContext("--$i", vars_), IsEqual("2"));
+  //   EXPECT_THAT(EvalWithContext("--$i - 1", vars_), IsEqual("0"));
 
-//   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-//   EXPECT_THAT(EvalWithContext("++$f", vars_), IsEqual("2.5"));
-//   EXPECT_THAT(EvalWithContext("++$f + 1", vars_), IsEqual("4.5"));
-//   EXPECT_THAT(EvalWithContext("--$f", vars_), IsEqual("2.5"));
-//   EXPECT_THAT(EvalWithContext("--$f - 1", vars_), IsEqual("0.5"));
+  //   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  //   EXPECT_THAT(EvalWithContext("++$f", vars_), IsEqual("2.5"));
+  //   EXPECT_THAT(EvalWithContext("++$f + 1", vars_), IsEqual("4.5"));
+  //   EXPECT_THAT(EvalWithContext("--$f", vars_), IsEqual("2.5"));
+  //   EXPECT_THAT(EvalWithContext("--$f - 1", vars_), IsEqual("0.5"));
 
-//   ASSERT_TRUE(CreateContextVariable("$d", "1.5"));
-//   EXPECT_THAT(EvalWithContext("++$d", vars_), IsEqual("2.5"));
-//   EXPECT_THAT(EvalWithContext("++$d + 1", vars_), IsEqual("4.5"));
-//   EXPECT_THAT(EvalWithContext("--$d", vars_), IsEqual("2.5"));
-//   EXPECT_THAT(EvalWithContext("--$d - 1", vars_), IsEqual("0.5"));
+  //   ASSERT_TRUE(CreateContextVariable("$d", "1.5"));
+  //   EXPECT_THAT(EvalWithContext("++$d", vars_), IsEqual("2.5"));
+  //   EXPECT_THAT(EvalWithContext("++$d + 1", vars_), IsEqual("4.5"));
+  //   EXPECT_THAT(EvalWithContext("--$d", vars_), IsEqual("2.5"));
+  //   EXPECT_THAT(EvalWithContext("--$d - 1", vars_), IsEqual("0.5"));
 
-//   ASSERT_TRUE(CreateContextVariable("$p", "(int*)4"));
-//   EXPECT_THAT(EvalWithContext("++$p", vars_),
-//               IsEqual(Is32Bit() ? "0x00000008" : "0x0000000000000008"));
-//   EXPECT_THAT(EvalWithContext("++$p + 1", vars_),
-//               IsEqual(Is32Bit() ? "0x00000010" : "0x0000000000000010"));
-//   EXPECT_THAT(EvalWithContext("--$p", vars_),
-//               IsEqual(Is32Bit() ? "0x00000008" : "0x0000000000000008"));
-//   EXPECT_THAT(EvalWithContext("--$p - 1", vars_),
-//               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-// #endif
+  //   ASSERT_TRUE(CreateContextVariable("$p", "(int*)4"));
+  //   EXPECT_THAT(EvalWithContext("++$p", vars_),
+  //               IsEqual(Is32Bit() ? "0x00000008" : "0x0000000000000008"));
+  //   EXPECT_THAT(EvalWithContext("++$p + 1", vars_),
+  //               IsEqual(Is32Bit() ? "0x00000010" : "0x0000000000000010"));
+  //   EXPECT_THAT(EvalWithContext("--$p", vars_),
+  //               IsEqual(Is32Bit() ? "0x00000008" : "0x0000000000000008"));
+  //   EXPECT_THAT(EvalWithContext("--$p - 1", vars_),
+  //               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+  // #endif
 }
 
 TEST_F(EvalTest, TestPostfixIncDec) {
@@ -2768,45 +2794,46 @@ TEST_F(EvalTest, TestPostfixIncDec) {
   EXPECT_THAT(Eval("i--"),
               IsError("side effects are not supported in this context"));
 
-// #ifndef __EMSCRIPTEN__
-//   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
-//   EXPECT_THAT(EvalWithContext("$arr--", vars_),
-//               IsError("cannot decrement value of type 'int[3]'"));
+  // #ifndef __EMSCRIPTEN__
+  //   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
+  //   EXPECT_THAT(EvalWithContext("$arr--", vars_),
+  //               IsError("cannot decrement value of type 'int[3]'"));
 
-//   ASSERT_TRUE(CreateContextVariable("$enum_foo", "ScopedEnum::kFoo"));
-//   EXPECT_THAT(EvalWithContext("$enum_foo++", vars_),
-//               IsError("cannot increment expression of enum type 'ScopedEnum'"));
+  //   ASSERT_TRUE(CreateContextVariable("$enum_foo", "ScopedEnum::kFoo"));
+  //   EXPECT_THAT(EvalWithContext("$enum_foo++", vars_),
+  //               IsError("cannot increment expression of enum type
+  //               'ScopedEnum'"));
 
-//   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-//   EXPECT_THAT(EvalWithContext("$i++", vars_), IsEqual("1"));
-//   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("2"));
-//   EXPECT_THAT(EvalWithContext("$i++ + 1", vars_), IsEqual("3"));
-//   EXPECT_THAT(EvalWithContext("$i--", vars_), IsEqual("3"));
-//   EXPECT_THAT(EvalWithContext("$i-- - 1", vars_), IsEqual("1"));
+  //   ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  //   EXPECT_THAT(EvalWithContext("$i++", vars_), IsEqual("1"));
+  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("2"));
+  //   EXPECT_THAT(EvalWithContext("$i++ + 1", vars_), IsEqual("3"));
+  //   EXPECT_THAT(EvalWithContext("$i--", vars_), IsEqual("3"));
+  //   EXPECT_THAT(EvalWithContext("$i-- - 1", vars_), IsEqual("1"));
 
-//   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-//   EXPECT_THAT(EvalWithContext("$f++", vars_), IsEqual("1.5"));
-//   EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("2.5"));
-//   EXPECT_THAT(EvalWithContext("$f++ + 1", vars_), IsEqual("3.5"));
-//   EXPECT_THAT(EvalWithContext("$f--", vars_), IsEqual("3.5"));
-//   EXPECT_THAT(EvalWithContext("$f-- - 1", vars_), IsEqual("1.5"));
+  //   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  //   EXPECT_THAT(EvalWithContext("$f++", vars_), IsEqual("1.5"));
+  //   EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("2.5"));
+  //   EXPECT_THAT(EvalWithContext("$f++ + 1", vars_), IsEqual("3.5"));
+  //   EXPECT_THAT(EvalWithContext("$f--", vars_), IsEqual("3.5"));
+  //   EXPECT_THAT(EvalWithContext("$f-- - 1", vars_), IsEqual("1.5"));
 
-//   ASSERT_TRUE(CreateContextVariable("$d", "1.5"));
-//   EXPECT_THAT(EvalWithContext("$d++", vars_), IsEqual("1.5"));
-//   EXPECT_THAT(EvalWithContext("$d++ + 1", vars_), IsEqual("3.5"));
-//   EXPECT_THAT(EvalWithContext("$d--", vars_), IsEqual("3.5"));
-//   EXPECT_THAT(EvalWithContext("$d-- - 1", vars_), IsEqual("1.5"));
+  //   ASSERT_TRUE(CreateContextVariable("$d", "1.5"));
+  //   EXPECT_THAT(EvalWithContext("$d++", vars_), IsEqual("1.5"));
+  //   EXPECT_THAT(EvalWithContext("$d++ + 1", vars_), IsEqual("3.5"));
+  //   EXPECT_THAT(EvalWithContext("$d--", vars_), IsEqual("3.5"));
+  //   EXPECT_THAT(EvalWithContext("$d-- - 1", vars_), IsEqual("1.5"));
 
-//   ASSERT_TRUE(CreateContextVariable("$p", "(int*)4"));
-//   EXPECT_THAT(EvalWithContext("$p++", vars_),
-//               IsEqual(Is32Bit() ? "0x00000004" : "0x0000000000000004"));
-//   EXPECT_THAT(EvalWithContext("$p++ + 1", vars_),
-//               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
-//   EXPECT_THAT(EvalWithContext("$p--", vars_),
-//               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
-//   EXPECT_THAT(EvalWithContext("$p-- - 1", vars_),
-//               IsEqual(Is32Bit() ? "0x00000004" : "0x0000000000000004"));
-// #endif
+  //   ASSERT_TRUE(CreateContextVariable("$p", "(int*)4"));
+  //   EXPECT_THAT(EvalWithContext("$p++", vars_),
+  //               IsEqual(Is32Bit() ? "0x00000004" : "0x0000000000000004"));
+  //   EXPECT_THAT(EvalWithContext("$p++ + 1", vars_),
+  //               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
+  //   EXPECT_THAT(EvalWithContext("$p--", vars_),
+  //               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
+  //   EXPECT_THAT(EvalWithContext("$p-- - 1", vars_),
+  //               IsEqual(Is32Bit() ? "0x00000004" : "0x0000000000000004"));
+  // #endif
 }
 
 #ifndef __EMSCRIPTEN__
@@ -2827,7 +2854,7 @@ TEST_F(EvalTest, TestDereferencedType) {
   // The expression evaluator removes the references from all values and we must
   // verify that the resulting type is correct.
 
-  for (auto&& expr : {"p_ref", "*p_ptr"}) {
+  for (auto &&expr : {"p_ref", "*p_ptr"}) {
     // Directly evaluate the expression and verify the types.
     auto ret = Eval(expr);
 
@@ -2857,46 +2884,46 @@ TEST_F(EvalTest, TestAssignment) {
   EXPECT_THAT(Eval("eOne = 1"),
               IsError("no known conversion from 'int' to 'Enum'"));
 
-// #ifndef __EMSCRIPTEN__
-//   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-//   EXPECT_THAT(EvalWithContext("$i = 2", vars_), IsEqual("2"));
-//   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("2"));
-//   EXPECT_THAT(EvalWithContext("$i = -2", vars_), IsEqual("-2"));
-//   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("-2"));
-//   EXPECT_THAT(EvalWithContext("$i = eOne", vars_), IsEqual("0"));
-//   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("0"));
-//   EXPECT_THAT(EvalWithContext("$i = eTwo", vars_), IsEqual("1"));
-//   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("1"));
+  // #ifndef __EMSCRIPTEN__
+  //   ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  //   EXPECT_THAT(EvalWithContext("$i = 2", vars_), IsEqual("2"));
+  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("2"));
+  //   EXPECT_THAT(EvalWithContext("$i = -2", vars_), IsEqual("-2"));
+  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("-2"));
+  //   EXPECT_THAT(EvalWithContext("$i = eOne", vars_), IsEqual("0"));
+  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("0"));
+  //   EXPECT_THAT(EvalWithContext("$i = eTwo", vars_), IsEqual("1"));
+  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("1"));
 
-//   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-//   EXPECT_THAT(EvalWithContext("$f = 2.5", vars_), IsEqual("2.5"));
-//   EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("2.5"));
-//   EXPECT_THAT(EvalWithContext("$f = 3.5f", vars_), IsEqual("3.5"));
-//   EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("3.5"));
+  //   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  //   EXPECT_THAT(EvalWithContext("$f = 2.5", vars_), IsEqual("2.5"));
+  //   EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("2.5"));
+  //   EXPECT_THAT(EvalWithContext("$f = 3.5f", vars_), IsEqual("3.5"));
+  //   EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("3.5"));
 
-//   ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
-//   EXPECT_THAT(EvalWithContext("$s = 100000", vars_), IsEqual("-31072"));
-//   EXPECT_THAT(EvalWithContext("$s", vars_), IsEqual("-31072"));
+  //   ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
+  //   EXPECT_THAT(EvalWithContext("$s = 100000", vars_), IsEqual("-31072"));
+  //   EXPECT_THAT(EvalWithContext("$s", vars_), IsEqual("-31072"));
 
-//   ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
-//   EXPECT_THAT(EvalWithContext("$p = 1", vars_),
-//               IsError("no known conversion from 'int' to 'int *'"));
-//   EXPECT_THAT(EvalWithContext("$p = (int*)12", vars_),
-//               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
-//   EXPECT_THAT(EvalWithContext("$p", vars_),
-//               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
-//   EXPECT_THAT(EvalWithContext("$p = 0", vars_),
-//               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-//   EXPECT_THAT(EvalWithContext("$p = nullptr", vars_),
-//               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+  //   ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
+  //   EXPECT_THAT(EvalWithContext("$p = 1", vars_),
+  //               IsError("no known conversion from 'int' to 'int *'"));
+  //   EXPECT_THAT(EvalWithContext("$p = (int*)12", vars_),
+  //               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
+  //   EXPECT_THAT(EvalWithContext("$p", vars_),
+  //               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
+  //   EXPECT_THAT(EvalWithContext("$p = 0", vars_),
+  //               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+  //   EXPECT_THAT(EvalWithContext("$p = nullptr", vars_),
+  //               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 
-//   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1, 2}"));
-//   EXPECT_THAT(EvalWithContext("$p = $arr", vars_), IsOk());
+  //   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1, 2}"));
+  //   EXPECT_THAT(EvalWithContext("$p = $arr", vars_), IsOk());
 
-//   ASSERT_TRUE(CreateContextVariableArray("float", "$farr", "{1.f, 2.f}"));
-//   EXPECT_THAT(EvalWithContext("$p = $farr", vars_),
-//               IsError("no known conversion from 'float[2]' to 'int *'"));
-// #endif
+  //   ASSERT_TRUE(CreateContextVariableArray("float", "$farr", "{1.f, 2.f}"));
+  //   EXPECT_THAT(EvalWithContext("$p = $farr", vars_),
+  //               IsError("no known conversion from 'float[2]' to 'int *'"));
+  // #endif
 }
 
 TEST_F(EvalTest, TestCompositeAssignmentInvalid) {
@@ -2918,18 +2945,18 @@ TEST_F(EvalTest, TestCompositeAssignmentInvalid) {
       Eval("f %= 1"),
       IsError("invalid operands to binary expression ('float' and 'int')"));
 
-// #ifndef __EMSCRIPTEN__
-//   ASSERT_TRUE(CreateContextVariable("Enum", "$e", false, "Enum::ONE"));
-//   EXPECT_THAT(
-//       EvalWithContext("$e *= 1", vars_),
-//       // TODO(werat): This should actually be:
-//       // > assigning to 'Enum' from incompatible type 'int'
-//       IsError("invalid operands to binary expression ('Enum' and 'int')"));
+  // #ifndef __EMSCRIPTEN__
+  //   ASSERT_TRUE(CreateContextVariable("Enum", "$e", false, "Enum::ONE"));
+  //   EXPECT_THAT(
+  //       EvalWithContext("$e *= 1", vars_),
+  //       // TODO(werat): This should actually be:
+  //       // > assigning to 'Enum' from incompatible type 'int'
+  //       IsError("invalid operands to binary expression ('Enum' and 'int')"));
 
-//   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-//   EXPECT_THAT(EvalWithContext("($i += 1) -= 2", vars_),
-//               IsError("side effects are not supported in this context"));
-// #endif
+  //   ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  //   EXPECT_THAT(EvalWithContext("($i += 1) -= 2", vars_),
+  //               IsError("side effects are not supported in this context"));
+  // #endif
 }
 
 // #ifndef __EMSCRIPTEN__
@@ -2956,10 +2983,12 @@ TEST_F(EvalTest, TestCompositeAssignmentInvalid) {
 //               IsEqual(Is32Bit() ? "0x0000000e" : "0x000000000000000e"));
 //   EXPECT_THAT(
 //       EvalWithContext("$p += 1.5", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'double')"));
+//       IsError("invalid operands to binary expression ('int *' and
+//       'double')"));
 //   EXPECT_THAT(
 //       EvalWithContext("$p += $p", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'int *')"));
+//       IsError("invalid operands to binary expression ('int *' and 'int
+//       *')"));
 //   EXPECT_THAT(EvalWithContext("$i += $p", vars_),
 //               IsError("no known conversion from 'int *' to 'int'"));
 // }
@@ -3061,13 +3090,14 @@ TEST_F(EvalTest, TestCompositeAssignmentInvalid) {
 //   EXPECT_THAT(EvalWithContext("$i >>= 1LL", vars_), IsEqual("104"));
 
 //   ASSERT_TRUE(CreateContextVariable("$c", "(signed char)-1"));
-//   EXPECT_THAT(EvalWithContext("$c &= 0b11110011", vars_), IsEqual("'\\xf3'"));
-//   EXPECT_THAT(EvalWithContext("$c |= 0b01001011", vars_), IsEqual("'\\xfb'"));
-//   EXPECT_THAT(EvalWithContext("$c ^= 0b00000110", vars_), IsEqual("'\\xfd'"));
-//   EXPECT_THAT(EvalWithContext("$c <<= 5", vars_), IsEqual("'\\xa0'"));
-//   EXPECT_THAT(EvalWithContext("$c >>= 20", vars_), IsEqual("'\\xff'"));
-//   EXPECT_THAT(EvalWithContext("$c <<= 2U", vars_), IsEqual("'\\xfc'"));
-//   EXPECT_THAT(EvalWithContext("$c >>= eTwo", vars_), IsEqual("'\\xfe'"));
+//   EXPECT_THAT(EvalWithContext("$c &= 0b11110011", vars_),
+//   IsEqual("'\\xf3'")); EXPECT_THAT(EvalWithContext("$c |= 0b01001011",
+//   vars_), IsEqual("'\\xfb'")); EXPECT_THAT(EvalWithContext("$c ^=
+//   0b00000110", vars_), IsEqual("'\\xfd'")); EXPECT_THAT(EvalWithContext("$c
+//   <<= 5", vars_), IsEqual("'\\xa0'")); EXPECT_THAT(EvalWithContext("$c >>=
+//   20", vars_), IsEqual("'\\xff'")); EXPECT_THAT(EvalWithContext("$c <<= 2U",
+//   vars_), IsEqual("'\\xfc'")); EXPECT_THAT(EvalWithContext("$c >>= eTwo",
+//   vars_), IsEqual("'\\xfe'"));
 
 //   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
 //   EXPECT_THAT(
@@ -3109,20 +3139,21 @@ TEST_F(EvalTest, TestCompositeAssignmentInvalid) {
 //       IsError("invalid operands to binary expression ('int *' and 'char')"));
 //   EXPECT_THAT(
 //       EvalWithContext("$p ^= &f", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'float *')"));
+//       IsError("invalid operands to binary expression ('int *' and 'float
+//       *')"));
 //   EXPECT_THAT(
 //       EvalWithContext("$p <<= 1", vars_),
 //       IsError("invalid operands to binary expression ('int *' and 'int')"));
 //   EXPECT_THAT(
 //       EvalWithContext("$p >>= $p", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'int *')"));
+//       IsError("invalid operands to binary expression ('int *' and 'int
+//       *')"));
 // }
 
 // TEST_F(EvalTest, TestSideEffects) {
 //   // Comparing with LLDB is not possible with side effects enabled -- results
-//   // will always be different (because the same expression is evaluated twice).
-//   this->compare_with_lldb_ = false;
-//   this->allow_side_effects_ = true;
+//   // will always be different (because the same expression is evaluated
+//   twice). this->compare_with_lldb_ = false; this->allow_side_effects_ = true;
 
 //   EXPECT_THAT(Eval("x++"), IsEqual("1"));
 //   EXPECT_THAT(Eval("x"), IsEqual("2"));
@@ -3370,7 +3401,7 @@ TEST_F(EvalTest, TestTypeComparison) {
   EXPECT_THAT(Eval("&(true ? icpcpc : micpcpc)"), IsOk());
 
   // Ensure that "signed char" and "char" are different types.
-  EXPECT_THAT(Eval("true ? c : sc"), IsEqual("2"));  // int
+  EXPECT_THAT(Eval("true ? c : sc"), IsEqual("2")); // int
   EXPECT_THAT(Eval("true ? sc : (signed char)67"), IsEqual("'A'"));
   EXPECT_THAT(Eval("true ? (char)66 : (signed char)65"), IsEqual("66"));
   EXPECT_THAT(Eval("true ? cc : mc"), IsEqual("'B'"));
@@ -3602,7 +3633,7 @@ TEST_F(EvalTest, TestStringParsing) {
     auto data = result.lldb_DIL_value.GetData();
     EXPECT_EQ(data.GetByteSize(), 8);
     char16_t val[4];
-    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void*>(val), 8), 8);
+    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 8), 8);
     EXPECT_EQ(val[0], u'a');
     EXPECT_EQ(val[1], u'b');
     EXPECT_EQ(val[2], u'c');
@@ -3614,7 +3645,7 @@ TEST_F(EvalTest, TestStringParsing) {
     auto data = result.lldb_DIL_value.GetData();
     EXPECT_EQ(data.GetByteSize(), 16);
     char32_t val[4];
-    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void*>(val), 16),
+    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 16),
               16);
     EXPECT_EQ(val[0], U'猫');
     EXPECT_EQ(val[1], U'ъ');
@@ -3629,10 +3660,10 @@ TEST_F(EvalTest, TestStringParsing) {
 #ifdef _WIN32
     // On Windows it holds sizeof(wchar_t) == 2.
     EXPECT_EQ(data.GetByteSize(), 8);
-    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void*>(val), 8), 8);
+    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 8), 8);
 #else
     EXPECT_EQ(data.GetByteSize(), 16);
-    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void*>(val), 16),
+    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 16),
               16);
 #endif
     EXPECT_EQ(val[0], L'a');

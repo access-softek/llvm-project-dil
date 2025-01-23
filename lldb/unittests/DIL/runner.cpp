@@ -43,8 +43,8 @@ const uint32_t kWaitForEventTimeout = 30;
 const uint32_t kWaitForEventTimeout = 5;
 #endif
 
-int FindBreakpointLine(const std::string& file_path,
-                       const std::string& break_line) {
+int FindBreakpointLine(const std::string &file_path,
+                       const std::string &break_line) {
   // Read the source file to find the breakpoint location.
   std::ifstream infile(file_path);
   std::string line;
@@ -60,7 +60,7 @@ int FindBreakpointLine(const std::string& file_path,
   exit(1);
 }
 
-std::string filename_of_source_path(const std::string& source_path) {
+std::string filename_of_source_path(const std::string &source_path) {
   auto idx = source_path.find_last_of("/\\");
   if (idx == std::string::npos) {
     idx = 0;
@@ -72,24 +72,28 @@ std::string filename_of_source_path(const std::string& source_path) {
 }
 
 lldb::SBProcess LaunchTestProgram(lldb::SBDebugger debugger,
-                                  const std::string& source_path,
-                                  const std::string& binary_path,
-                                  const std::string& break_line) {
+                                  const std::string &source_path,
+                                  const std::string &binary_path,
+                                  const std::string &break_line) {
   auto target = debugger.CreateTarget(binary_path.c_str());
 
   auto source_file = filename_of_source_path(source_path);
 
-  const char* argv[] = {binary_path.c_str(), nullptr};
+  const char *argv[] = {binary_path.c_str(), nullptr};
 
   auto bp = target.BreakpointCreateByLocation(
       source_file.c_str(), FindBreakpointLine(source_path.c_str(), break_line));
   // Test programs don't perform any I/O, so current directory doesn't
   // matter.
   if (bp.GetNumLocations() == 0)
-    std::cerr << "WARNING:  Unable to resolve breakpoint to any actual locations." << std::endl;
+    std::cerr
+        << "WARNING:  Unable to resolve breakpoint to any actual locations."
+        << std::endl;
   auto process = target.LaunchSimple(argv, nullptr, ".");
   if (!process.IsValid()) {
-    std::cerr << "ERROR:  Unable to launch process. Check that the path to the binary is valid." << std::endl;
+    std::cerr << "ERROR:  Unable to launch process. Check that the path to the "
+                 "binary is valid."
+              << std::endl;
     return process;
   }
   lldb::SBEvent event;

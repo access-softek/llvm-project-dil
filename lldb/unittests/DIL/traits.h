@@ -18,11 +18,8 @@
 
 // Template magic to check whether a class has a specific method.
 template <typename T, typename F>
-constexpr auto is_valid(F&& f) -> decltype(f(std::declval<T>()), true) {
+constexpr auto is_valid(F &&f) -> decltype(f(std::declval<T>()), true) {
   return true;
 }
-template <typename>
-constexpr bool is_valid(...) {
-  return false;
-}
-#define HAS_METHOD(T, EXPR) is_valid<T>([](auto&& obj) -> decltype(obj.EXPR) {})
+template <typename> constexpr bool is_valid(...) { return false; }
+#define HAS_METHOD(T, EXPR) is_valid<T>([](auto &&obj) -> decltype(obj.EXPR) {})

@@ -1,5 +1,4 @@
 add_subdirectory(lldb-commandinterpreter-fuzzer)
-add_subdirectory(lldb-DIL-fuzzer)
 add_subdirectory(lldb-dwarf-expression-fuzzer)
 add_subdirectory(lldb-expression-fuzzer)
 add_subdirectory(lldb-target-fuzzer)

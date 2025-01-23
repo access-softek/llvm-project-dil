@@ -601,18 +601,17 @@ TEST_F(EvalTest, TestArithmetic) {
 }
 
 TEST_F(EvalTest, TestZeroDivision) {
-  // Zero division and remainder is UB and LLDB return garbage values. Our
-  // implementation returns zero, but that might change in the future. The
-  // important thing here is to avoid crashing with SIGFPE.
+  // Zero division and remainder is UB and LLDB return garbage values.
+  // DIL implementation detects division by zero.
   this->compare_with_lldb_ = false;
 
-  EXPECT_THAT(Eval("1 / 0"), IsEqual("0"));
-  EXPECT_THAT(Eval("1 / uint_zero"), IsEqual("0"));
-  EXPECT_THAT(Eval("1ll / 0 + 1"), IsEqual("1"));
+  EXPECT_THAT(Eval("1 / 0"), IsError("Division by zero detected."));
+  EXPECT_THAT(Eval("1 / uint_zero"), IsError("Division by zero detected."));
+  EXPECT_THAT(Eval("1ll / 0 + 1"), IsError("Division by zero detected."));
 
-  EXPECT_THAT(Eval("1 % 0"), IsEqual("0"));
-  EXPECT_THAT(Eval("1 % uint_zero"), IsEqual("0"));
-  EXPECT_THAT(Eval("1 % uint_zero + 1"), IsEqual("1"));
+  EXPECT_THAT(Eval("1 % 0"), IsError("Division by zero detected."));
+  EXPECT_THAT(Eval("1 % uint_zero"), IsError("Division by zero detected."));
+  EXPECT_THAT(Eval("1 % uint_zero + 1"), IsError("Division by zero detected."));
 }
 
 TEST_F(EvalTest, TestBitwiseOperators) {

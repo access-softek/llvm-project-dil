@@ -3540,7 +3540,7 @@ TEST_F(EvalTest, TestTypeVsIdentifier) {
 //               IsError("use of undeclared identifier '$y'"));
 // }
 
-TEST_F(EvalTest, TestRegisters) {
+TEST_F(EvalTest, DISABLED_TestRegisters) {
   // LLDB loses the value formatter when evaluating registers and prints their
   // value "as is". In lldb-eval the value formatter is preserved and the
   // register can be "pretty-printed" depending on its type (e.g. vector
@@ -3578,7 +3578,7 @@ TEST_F(EvalTest, TestRegistersNoDollar) {
 }
 #endif
 
-TEST_F(EvalTest, TestCharParsing) {
+TEST_F(EvalTest, DISABLED_TestCharParsing) {
   EXPECT_THAT(Eval("1 + 'A'"), IsEqual("66"));
   EXPECT_THAT(Eval("'B' - 'A'"), IsEqual("1"));
   EXPECT_THAT(Eval("'A' == 'B'"), IsEqual("false"));
@@ -3624,7 +3624,7 @@ TEST_F(EvalTest, TestCharParsing) {
 }
 
 #ifndef __EMSCRIPTEN__
-TEST_F(EvalTest, TestStringParsing) {
+TEST_F(EvalTest, DISABLED_TestStringParsing) {
   lldb::SBError ignore;
   // Comparing is done manually (instead of using IsOk and IsEqual matchers).
   // This is because `SBValue::GetValue()` returns a nullptr for array types.

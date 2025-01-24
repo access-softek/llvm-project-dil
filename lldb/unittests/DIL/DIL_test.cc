@@ -12,14 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// DIL
-// Removed for now:
-// * All tests with context variables evaluation: need to implement an call
-//   interface to DIL
-// * All tests with evaluation with scope: need to implement an call interface
-//   to DIL
-// * Some tests that crash the test suite completely: some of the tests that
-//   involve nullptr
+/// DIL TODO:
+// * Fix errors in XFailed tests
+// * Fix segfault errors in GTEST_SKIP tests
+// * Implement interfaces for scoped, context, and separate parsing
+//   and re-enable DISABLED_ tests
 
 #include "lldb/API/SBError.h"
 #include "lldb/lldb-enumerations.h"

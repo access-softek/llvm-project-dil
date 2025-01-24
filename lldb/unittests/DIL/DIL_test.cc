@@ -1821,11 +1821,7 @@ TEST_F(EvalTest, TestQualifiedId) {
   EXPECT_THAT(Eval("ns::ns::i"), IsEqual("2"));
 }
 
-// This test depends on one of the following patches:
-// * https://reviews.llvm.org/D92223
-// * https://reviews.llvm.org/D92643
-TEST_F(EvalTest, DISABLED_TestStaticConstDeclaredInline) {
-  // Upstream LLDB doesn't handle static const variables.
+TEST_F(EvalTest, TestStaticConstDeclaredInline) {
   this->compare_with_lldb_ = false;
 
   EXPECT_THAT(Eval("::outer::inner::Vars::inline_static"), IsEqual("1.5"));
@@ -1838,10 +1834,10 @@ TEST_F(EvalTest, DISABLED_TestStaticConstDeclaredInline) {
   EXPECT_THAT(Eval("outer::Vars::inline_static"), IsEqual("4.5"));
   EXPECT_THAT(Eval("outer::Vars::static_constexpr"), IsEqual("5"));
 
-  EXPECT_THAT(Eval("::Vars::inline_static"), IsEqual("7.5"));
-  EXPECT_THAT(Eval("::Vars::static_constexpr"), IsEqual("8"));
-  EXPECT_THAT(Eval("Vars::inline_static"), IsEqual("7.5"));
-  EXPECT_THAT(Eval("Vars::static_constexpr"), IsEqual("8"));
+  EXPECT_THAT(Eval("::Vars::inline_static"), XFail(IsEqual("7.5")));
+  EXPECT_THAT(Eval("::Vars::static_constexpr"), XFail(IsEqual("8")));
+  EXPECT_THAT(Eval("Vars::inline_static"), XFail(IsEqual("7.5")));
+  EXPECT_THAT(Eval("Vars::static_constexpr"), XFail(IsEqual("8")));
 }
 
 #ifndef __EMSCRIPTEN__

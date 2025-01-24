@@ -82,9 +82,9 @@ struct CompiledExpr {
 class EvaluatorHelper {
 public:
   EvaluatorHelper(lldb::SBFrame frame, bool lldb, bool side_effects)
-      : frame_(frame), lldb_(lldb), side_effects_(side_effects) {}
+      : frame_(frame), lldb_(lldb) {}
   EvaluatorHelper(lldb::SBValue scope, bool lldb, bool side_effects)
-      : scope_(scope), lldb_(lldb), side_effects_(side_effects) {}
+      : scope_(scope), lldb_(lldb) {}
 
 public:
   EvalResult Eval(const std::string &expr) {
@@ -231,7 +231,7 @@ private:
   lldb::SBFrame frame_;
   lldb::SBValue scope_;
   bool lldb_;
-  bool side_effects_;
+  // bool side_effects_;
 };
 #endif
 
@@ -506,7 +506,7 @@ protected:
 };
 
 TEST_F(EvalTest, TestSymbols) {
-  EXPECT_GT(frame_.GetModule().GetNumSymbols(), 0)
+  EXPECT_GT(frame_.GetModule().GetNumSymbols(), (size_t)0)
       << "No symbols might indicate that the test binary was built incorrectly";
 }
 
@@ -3485,7 +3485,7 @@ TEST_F(EvalTest, DISABLED_TestSeparateParsing) {
   auto expr_d = Scope("d").Compile("a_ * b_ * c_ * d_", error);
   ASSERT_TRUE(error.Success());
 
-  auto expr_c_this = Scope("c").Compile("this", error);
+  Scope("c").Compile("this", error);
   ASSERT_TRUE(error.Success());
 
   EXPECT_THAT(Scope("a").Eval(expr_a), IsEqual("1"));
@@ -3627,7 +3627,7 @@ TEST_F(EvalTest, DISABLED_TestStringParsing) {
     EXPECT_TRUE(result.lldb_DIL_error.Success());
     EXPECT_TRUE(result.lldb_DIL_value.IsValid());
     auto data = result.lldb_DIL_value.GetData();
-    EXPECT_EQ(data.GetByteSize(), 4);
+    EXPECT_EQ(data.GetByteSize(), (size_t)4);
     EXPECT_STREQ(data.GetString(ignore, 0), "abc");
   }
   {
@@ -3635,23 +3635,24 @@ TEST_F(EvalTest, DISABLED_TestStringParsing) {
     EXPECT_TRUE(result.lldb_DIL_error.Success());
     EXPECT_TRUE(result.lldb_DIL_value.IsValid());
     auto data = result.lldb_DIL_value.GetData();
-    EXPECT_EQ(data.GetByteSize(), 1);
+    EXPECT_EQ(data.GetByteSize(), (size_t)1);
     EXPECT_STREQ(data.GetString(ignore, 0), "");
   }
   {
     auto result = Eval("u8\"abc\"");
     EXPECT_TRUE(result.lldb_DIL_value.IsValid());
     auto data = result.lldb_DIL_value.GetData();
-    EXPECT_EQ(data.GetByteSize(), 4);
+    EXPECT_EQ(data.GetByteSize(), (size_t)4);
     EXPECT_STREQ(data.GetString(ignore, 0), "abc");
   }
   {
     auto result = Eval("u\"abc\"");
     EXPECT_TRUE(result.lldb_DIL_value.IsValid());
     auto data = result.lldb_DIL_value.GetData();
-    EXPECT_EQ(data.GetByteSize(), 8);
+    EXPECT_EQ(data.GetByteSize(), (size_t)8);
     char16_t val[4];
-    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 8), 8);
+    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 8),
+              (size_t)8);
     EXPECT_EQ(val[0], u'a');
     EXPECT_EQ(val[1], u'b');
     EXPECT_EQ(val[2], u'c');
@@ -3661,14 +3662,15 @@ TEST_F(EvalTest, DISABLED_TestStringParsing) {
     auto result = Eval("U\"猫ъü\"");
     EXPECT_TRUE(result.lldb_DIL_value.IsValid());
     auto data = result.lldb_DIL_value.GetData();
-    EXPECT_EQ(data.GetByteSize(), 16);
+    EXPECT_EQ(data.GetByteSize(), (size_t)16);
     char32_t val[4];
-    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 16),
-              16);
+    EXPECT_EQ(
+        data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), (size_t)16),
+        (size_t)16);
     EXPECT_EQ(val[0], U'猫');
     EXPECT_EQ(val[1], U'ъ');
     EXPECT_EQ(val[2], U'ü');
-    EXPECT_EQ(val[3], 0);
+    EXPECT_EQ(val[3], U'\0');
   }
   {
     auto result = Eval("L\"abc\"");
@@ -3677,12 +3679,13 @@ TEST_F(EvalTest, DISABLED_TestStringParsing) {
     wchar_t val[4];
 #ifdef _WIN32
     // On Windows it holds sizeof(wchar_t) == 2.
-    EXPECT_EQ(data.GetByteSize(), 8);
-    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 8), 8);
+    EXPECT_EQ(data.GetByteSize(), (size_t)(size_t)8);
+    EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 8),
+              (size_t)8);
 #else
-    EXPECT_EQ(data.GetByteSize(), 16);
+    EXPECT_EQ(data.GetByteSize(), (size_t)16);
     EXPECT_EQ(data.ReadRawData(ignore, 0, reinterpret_cast<void *>(val), 16),
-              16);
+              (size_t)16);
 #endif
     EXPECT_EQ(val[0], L'a');
     EXPECT_EQ(val[1], L'b');

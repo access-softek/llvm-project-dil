@@ -10,7 +10,6 @@ add_lldb_unittest(LLDBDILTests
 
 set(test_lib
   test_binary_libc++.bin
-  test_binary_libstdc++.bin
   test_binary.cc
   )
 

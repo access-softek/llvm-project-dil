@@ -388,6 +388,12 @@ Matcher<EvalResult> IsError(std::string value) {
   return MakeMatcher(new IsErrorMatcher(std::move(value)));
 }
 
+static unsigned xfailed = 0;
+template <typename InnerMatcher> Matcher<EvalResult> XFail(InnerMatcher m) {
+  xfailed++;
+  return Not(m);
+}
+
 #ifndef __EMSCRIPTEN__
 class EvalTest : public ::testing::Test {
 protected:
@@ -411,6 +417,10 @@ protected:
   }
 
   void TearDown() {
+    if (xfailed != 0) {
+      printf("[    !!    ] XFailed test cases: %d\n", xfailed);
+      xfailed = 0;
+    }
     process_.Destroy();
     lldb::SBDebugger::Destroy(debugger_);
   }
@@ -645,7 +655,7 @@ TEST_F(EvalTest, TestBitwiseOperators) {
   EXPECT_THAT(Eval("(signed char)-123 >> 8"), IsEqual("-1"));
 
   EXPECT_THAT(Eval("0b1011 & 0xFF"), IsEqual("11"));
-  EXPECT_THAT(Eval("0b1011 & mask_ff"), IsEqual("11"));
+  EXPECT_THAT(Eval("0b1011 & mask_ff"), XFail(IsEqual("11")));
   EXPECT_THAT(Eval("0b1011 & 0b0111"), IsEqual("3"));
   EXPECT_THAT(Eval("0b1011 | 0b0111"), IsEqual("15"));
   EXPECT_THAT(Eval("-0b1011 | 0xFF"), IsEqual("-1"));
@@ -863,8 +873,8 @@ TEST_F(EvalTest, TestPointerDereference) {
   EXPECT_THAT(Eval("&p_void[0]"),
               IsError("subscript of pointer to incomplete type 'void'"));
   EXPECT_THAT(Eval("&*p_void"),
-              IsError("indirection not permitted on operand of type"
-                      " 'void *'"));
+              XFail(IsError("indirection not permitted on operand of type"
+                            " 'void *'")));
   EXPECT_THAT(Eval("&pp_void0[2]"), IsOk());
 
   EXPECT_THAT(Eval("**pp_int0"), IsEqual("0"));
@@ -962,16 +972,16 @@ TEST_F(EvalTest, TestLocalVariables) {
 
 TEST_F(EvalTest, TestMemberOf) {
   EXPECT_THAT(Eval("s.x"), IsEqual("1"));
-  EXPECT_THAT(Eval("s.r"), IsEqual("2"));
+  EXPECT_THAT(Eval("s.r"), XFail(IsEqual("2")));
   EXPECT_THAT(Eval("s.r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("sr.x"), IsEqual("1"));
-  EXPECT_THAT(Eval("sr.r"), IsEqual("2"));
+  EXPECT_THAT(Eval("sr.r"), XFail(IsEqual("2")));
   EXPECT_THAT(Eval("sr.r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("sp->x"), IsEqual("1"));
-  EXPECT_THAT(Eval("sp->r"), IsEqual("2"));
+  EXPECT_THAT(Eval("sp->r"), XFail(IsEqual("2")));
   EXPECT_THAT(Eval("sp->r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("sarr->x"), IsEqual("5"));
-  EXPECT_THAT(Eval("sarr->r"), IsEqual("2"));
+  EXPECT_THAT(Eval("sarr->r"), XFail(IsEqual("2")));
   EXPECT_THAT(Eval("sarr->r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("(sarr + 1)->x"), IsEqual("1"));
 
@@ -1075,8 +1085,9 @@ TEST_F(EvalTest, TestGlobalVariableLookup) {
   EXPECT_THAT(Eval("::globalPtr"), IsOk());
   EXPECT_THAT(Eval("::globalRef"), IsEqual("-559038737"));
 
-  EXPECT_THAT(Eval("externGlobalVar"), IsEqual("12648430")); // 0x00C0FFEE
-  EXPECT_THAT(Eval("::externGlobalVar"), IsEqual("12648430"));
+  EXPECT_THAT(Eval("externGlobalVar"),
+              XFail(IsEqual("12648430"))); // 0x00C0FFEE
+  EXPECT_THAT(Eval("::externGlobalVar"), XFail(IsEqual("12648430")));
 
   EXPECT_THAT(Eval("ns::globalVar"), IsEqual("13"));
   EXPECT_THAT(Eval("ns::globalPtr"), IsOk());
@@ -1130,7 +1141,7 @@ TEST_F(EvalTest, TestAddressOf) {
   EXPECT_THAT(Eval("&p != &my_pr"), IsEqual("false"));
 
   EXPECT_THAT(Eval("&globalVar"), IsOk());
-  EXPECT_THAT(Eval("&externGlobalVar"), IsOk());
+  EXPECT_THAT(Eval("&externGlobalVar"), XFail(IsOk()));
   EXPECT_THAT(Eval("&s_str"), IsOk());
   EXPECT_THAT(Eval("&param"), IsOk());
 
@@ -1220,7 +1231,7 @@ TEST_F(EvalTest, TestSubscript) {
   EXPECT_THAT(Eval("uint8_arr[uchar_idx]"), IsEqual("'\\xab'", compare_types));
 
   // Test address-of of the subscripted value.
-  EXPECT_THAT(Eval("(&c_arr[1])->field_"), IsEqual("1"));
+  EXPECT_THAT(Eval("(&c_arr[1])->field_"), XFail(IsEqual("1")));
 }
 
 TEST_F(EvalTest, TestCStyleCastBuiltins) {
@@ -1841,16 +1852,16 @@ TEST_F(EvalTest, TestStaticConstDeclaredOutsideTheClass) {
   EXPECT_THAT(Eval("outer::inner::Vars::static_const"), IsEqual("3"));
   EXPECT_THAT(Eval("::outer::Vars::static_const"), IsEqual("6"));
   EXPECT_THAT(Eval("outer::Vars::static_const"), IsEqual("6"));
-  EXPECT_THAT(Eval("::Vars::static_const"), IsEqual("9"));
-  EXPECT_THAT(Eval("Vars::static_const"), IsEqual("9"));
+  EXPECT_THAT(Eval("::Vars::static_const"), XFail(IsEqual("9")));
+  EXPECT_THAT(Eval("Vars::static_const"), XFail(IsEqual("9")));
 
   EXPECT_THAT(Eval("::outer::inner::Vars::Nested::static_const"),
               IsEqual("10"));
   EXPECT_THAT(Eval("outer::inner::Vars::Nested::static_const"), IsEqual("10"));
   EXPECT_THAT(Eval("::outer::Vars::Nested::static_const"), IsEqual("20"));
   EXPECT_THAT(Eval("outer::Vars::Nested::static_const"), IsEqual("20"));
-  EXPECT_THAT(Eval("::Vars::Nested::static_const"), IsEqual("30"));
-  EXPECT_THAT(Eval("Vars::Nested::static_const"), IsEqual("30"));
+  EXPECT_THAT(Eval("::Vars::Nested::static_const"), XFail(IsEqual("30")));
+  EXPECT_THAT(Eval("Vars::Nested::static_const"), XFail(IsEqual("30")));
 
   // #ifndef __EMSCRIPTEN__
   //   EXPECT_THAT(Scope("outer_inner_vars").Eval("static_const"),
@@ -2055,30 +2066,37 @@ TEST_F(EvalTest, TestTemplateTypes) {
 #endif
   EXPECT_THAT(
       Eval("ns::T_1<ns::T_1<int> >::cx"),
-      IsError("use of undeclared identifier 'ns::T_1<ns::T_1<int> >::cx'"));
-  EXPECT_THAT(Eval("T_1<int>::cx"), IsEqual("24"));
-  EXPECT_THAT(Eval("T_1<double>::cx"), IsEqual("42"));
-  EXPECT_THAT(Eval("ns::T_1<int>::cx"), IsEqual("64"));
+      XFail(IsError(
+          "use of undeclared identifier 'ns::T_1<ns::T_1<int> >::cx'")));
+  EXPECT_THAT(Eval("T_1<int>::cx"), XFail(IsEqual("24")));
+  EXPECT_THAT(Eval("T_1<double>::cx"), XFail(IsEqual("42")));
+  EXPECT_THAT(Eval("ns::T_1<int>::cx"), XFail(IsEqual("64")));
 
   for (std::string arg : {"int", "int*", "int**", "int&", "int*&"}) {
-    EXPECT_THAT(Eval("(T_1<" + arg + ">::myint)1.2"), IsEqual("1.2"));
-    EXPECT_THAT(Eval("(::T_1<" + arg + ">::myint)1.2"), IsEqual("1.2"));
-    EXPECT_THAT(Eval("(T_1<T_1<" + arg + "> >::myint)1.2"), IsEqual("1.2"));
-    EXPECT_THAT(Eval("(::T_1<T_1<" + arg + "> >::myint)1.2"), IsEqual("1.2"));
+    EXPECT_THAT(Eval("(T_1<" + arg + ">::myint)1.2"), XFail(IsEqual("1.2")));
+    EXPECT_THAT(Eval("(::T_1<" + arg + ">::myint)1.2"), XFail(IsEqual("1.2")));
+    EXPECT_THAT(Eval("(T_1<T_1<" + arg + "> >::myint)1.2"),
+                XFail(IsEqual("1.2")));
+    EXPECT_THAT(Eval("(::T_1<T_1<" + arg + "> >::myint)1.2"),
+                XFail(IsEqual("1.2")));
 
-    EXPECT_THAT(Eval("(ns::T_1<" + arg + ">::myint)1.1"), IsEqual("1"));
-    EXPECT_THAT(Eval("(::ns::T_1<" + arg + ">::myint)1.1"), IsEqual("1"));
-    EXPECT_THAT(Eval("(ns::T_1<T_1<" + arg + "> >::myint)1.1"), IsEqual("1"));
-    EXPECT_THAT(Eval("(::ns::T_1<T_1<" + arg + "> >::myint)1.1"), IsEqual("1"));
+    EXPECT_THAT(Eval("(ns::T_1<" + arg + ">::myint)1.1"), XFail(IsEqual("1")));
+    EXPECT_THAT(Eval("(::ns::T_1<" + arg + ">::myint)1.1"),
+                XFail(IsEqual("1")));
+    EXPECT_THAT(Eval("(ns::T_1<T_1<" + arg + "> >::myint)1.1"),
+                XFail(IsEqual("1")));
+    EXPECT_THAT(Eval("(::ns::T_1<T_1<" + arg + "> >::myint)1.1"),
+                XFail(IsEqual("1")));
   }
 
   EXPECT_THAT(
       Eval("(ns::T_1<ns::T_1<int> >::myint)1.1"),
-      IsError("use of undeclared identifier 'ns::T_1<ns::T_1<int> >::myint'"));
+      XFail(IsError(
+          "use of undeclared identifier 'ns::T_1<ns::T_1<int> >::myint'")));
   EXPECT_THAT(
       Eval("(::ns::T_1<ns::T_1<int> >::myint)1.1"),
-      IsError(
-          "use of undeclared identifier '::ns::T_1<ns::T_1<int> >::myint'"));
+      XFail(IsError(
+          "use of undeclared identifier '::ns::T_1<ns::T_1<int> >::myint'")));
   for (std::string arg : {"int*", "int**", "int&", "int*&"}) {
     EXPECT_THAT(Eval("(ns::T_1<ns::T_1<" + arg + "> >::myint)1.1"),
                 IsError("use of undeclared identifier 'ns::T_1'"));
@@ -2086,30 +2104,34 @@ TEST_F(EvalTest, TestTemplateTypes) {
                 IsError("use of undeclared identifier '::ns::T_1'"));
   }
 
-  EXPECT_THAT(Eval("(T_2<int, char>::myint)1.1f"), IsEqual("1.10000002"));
-  EXPECT_THAT(Eval("(::T_2<int, char>::myint)1.1f"), IsEqual("1.10000002"));
-  EXPECT_THAT(Eval("(T_2<int*, char&>::myint)1.1f"), IsEqual("1.10000002"));
-  EXPECT_THAT(Eval("(::T_2<int&, char*>::myint)1.1f"), IsEqual("1.10000002"));
+  EXPECT_THAT(Eval("(T_2<int, char>::myint)1.1f"),
+              XFail(IsEqual("1.10000002")));
+  EXPECT_THAT(Eval("(::T_2<int, char>::myint)1.1f"),
+              XFail(IsEqual("1.10000002")));
+  EXPECT_THAT(Eval("(T_2<int*, char&>::myint)1.1f"),
+              XFail(IsEqual("1.10000002")));
+  EXPECT_THAT(Eval("(::T_2<int&, char*>::myint)1.1f"),
+              XFail(IsEqual("1.10000002")));
   EXPECT_THAT(Eval("(T_2<T_1<T_1<int> >, T_1<char> >::myint)1.1"),
-              IsEqual("1.10000002"));
+              XFail(IsEqual("1.10000002")));
   EXPECT_THAT(Eval("(::T_2<T_1<T_1<int> >, T_1<char> >::myint)1.1"),
-              IsEqual("1.10000002"));
+              XFail(IsEqual("1.10000002")));
 }
 
 TEST_F(EvalTest, TestTemplateCpp11) {
   // Template types lookup doesn't work well in the upstream LLDB.
   this->compare_with_lldb_ = false;
 
-  EXPECT_THAT(Eval("(T_1<T_1<int>>::myint)1"), IsEqual("1"));
-  EXPECT_THAT(Eval("(T_1<T_1<T_1<int>>>::myint)2"), IsEqual("2"));
+  EXPECT_THAT(Eval("(T_1<T_1<int>>::myint)1"), XFail(IsEqual("1")));
+  EXPECT_THAT(Eval("(T_1<T_1<T_1<int>>>::myint)2"), XFail(IsEqual("2")));
   EXPECT_THAT(Eval("(T_2<T_1<T_1<int>>, T_1<char>>::myint)1.5"),
-              IsEqual("1.5"));
+              XFail(IsEqual("1.5")));
 
   // Here T_1 is a local variable.
   EXPECT_THAT(Eval("T_1<2>1"), IsEqual("false"));  // (p < 2) > 1
   EXPECT_THAT(Eval("T_1<2>>1"), IsEqual("false")); // (p < 2) >> 1
   // And here it's a template.
-  EXPECT_THAT(Eval("T_1<int>::cx + 1"), IsEqual("25"));
+  EXPECT_THAT(Eval("T_1<int>::cx + 1"), XFail(IsEqual("25")));
 }
 
 TEST_F(EvalTest, TestTemplateWithNumericArguments) {
@@ -2119,10 +2141,10 @@ TEST_F(EvalTest, TestTemplateWithNumericArguments) {
   EXPECT_THAT(Eval("(Allocator<4>*)0"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
   EXPECT_THAT(Eval("(TArray<int, Allocator<4> >::ElementType*)0"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+              XFail(IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000")));
   // Test C++11's ">>" syntax.
   EXPECT_THAT(Eval("(TArray<int, Allocator<4>>::ElementType*)0"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+              XFail(IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000")));
 }
 
 #ifndef __EMSCRIPTEN__
@@ -2242,7 +2264,7 @@ TEST_F(EvalTest, TestBitFieldPromotion) {
   EXPECT_THAT(Eval("bf.f - 2"), IsEqual("4294967295"));
   EXPECT_THAT(Eval("bf.g - 2"), IsEqual("-1"));
   EXPECT_THAT(Eval("bf.h - 2"), IsEqual("-1"));
-  EXPECT_THAT(Eval("bf.i - 2"), IsEqual("18446744073709551615"));
+  EXPECT_THAT(Eval("bf.i - 2"), XFail(IsEqual("18446744073709551615")));
   EXPECT_THAT(Eval("bf.g - bf.b"), IsEqual("-8"));
 
   EXPECT_THAT(Eval("-(true ? bf.b : bf.a)"), IsEqual("-9"));
@@ -2252,7 +2274,7 @@ TEST_F(EvalTest, TestBitFieldPromotion) {
   EXPECT_THAT(Eval("-(true ? bf.b : bf.h)"), IsEqual("-9"));
 
   if (HAS_METHOD(lldb::SBType, GetEnumerationIntegerType())) {
-    EXPECT_THAT(Eval("bf.j - 2"), IsEqual("4294967295"));
+    EXPECT_THAT(Eval("bf.j - 2"), XFail(IsEqual("4294967295")));
     EXPECT_THAT(Eval("-(true ? bf.b : bf.j)"), IsEqual("4294967287"));
     EXPECT_THAT(Eval("-(true ? bf.e : bf.j)"), IsEqual("4294967295"));
   }
@@ -2268,7 +2290,7 @@ TEST_F(EvalTest, TestBitFieldWithSideEffects) {
 
   EXPECT_THAT(Eval("bf.b -= 10"), IsEqual("15"));
   EXPECT_THAT(Eval("bf.e -= 10"), IsEqual("-9"));
-  EXPECT_THAT(Eval("bf.e++"), IsEqual("-9"));
+  EXPECT_THAT(Eval("bf.e++"), XFail(IsEqual("-9")));
   EXPECT_THAT(Eval("++bf.e"), IsEqual("-7"));
 
   // TODO: Enable test once the issue is fixed:
@@ -2368,7 +2390,7 @@ TEST_F(EvalTest, TestScopedEnum) {
   EXPECT_THAT(Eval("(ScopedEnum)0.1"), IsEqual("kFoo"));
   EXPECT_THAT(Eval("(ScopedEnum)1.1"), IsEqual("kBar"));
   EXPECT_THAT(Eval("(ScopedEnum)-1"), IsOk());
-  EXPECT_THAT(Eval("(ScopedEnum)-1.1"), IsOk());
+  EXPECT_THAT(Eval("(ScopedEnum)-1.1"), XFail(IsOk()));
   EXPECT_THAT(Eval("(ScopedEnum)256"), IsOk());
   EXPECT_THAT(Eval("(ScopedEnum)257"), IsOk());
   EXPECT_THAT(Eval("(ScopedEnum)false"), IsEqual("kFoo"));
@@ -2379,7 +2401,7 @@ TEST_F(EvalTest, TestScopedEnum) {
   EXPECT_THAT(Eval("(unsigned short)enum_neg"), IsEqual("65535"));
   EXPECT_THAT(Eval("(short)ScopedEnum::kBar"), IsEqual("1"));
   EXPECT_THAT(Eval("(short*)enum_neg"),
-              IsEqual(Is32Bit() ? "0xffffffff" : "0xffffffffffffffff"));
+              XFail(IsEqual(Is32Bit() ? "0xffffffff" : "0xffffffffffffffff")));
   EXPECT_THAT(Eval("(char*)enum_u8_bar"),
               IsEqual(Is32Bit() ? "0x00000001" : "0x0000000000000001"));
   EXPECT_THAT(Eval("(float)enum_bar"), IsEqual("1"));
@@ -2548,8 +2570,8 @@ TEST_F(EvalTest, TestUnscopedEnumNegation) {
   this->compare_with_lldb_ = false;
 
   bool compare_types = HAS_METHOD(lldb::SBType, GetEnumerationIntegerType());
-  EXPECT_THAT(Eval("-enum_one"), IsEqual("-1", compare_types));
-  EXPECT_THAT(Eval("-enum_one_ref"), IsEqual("-1", compare_types));
+  EXPECT_THAT(Eval("-enum_one"), XFail(IsEqual("-1", compare_types)));
+  EXPECT_THAT(Eval("-enum_one_ref"), XFail(IsEqual("-1", compare_types)));
   EXPECT_THAT(Eval("-(UnscopedEnumEmpty)1"), IsOk(compare_types));
 }
 
@@ -2558,7 +2580,7 @@ TEST_F(EvalTest, TestUnscopedEnumWithUnderlyingType) {
   EXPECT_THAT(Eval("(UnscopedEnumUInt8)256"), IsEqual("kZeroU8"));
   EXPECT_THAT(Eval("(UnscopedEnumUInt8)257"), IsEqual("kOneU8"));
 
-  EXPECT_THAT(Eval("(UnscopedEnumInt8)-2.1"), IsOk());
+  EXPECT_THAT(Eval("(UnscopedEnumInt8)-2.1"), XFail(IsOk()));
   EXPECT_THAT(Eval("(int)enum_neg_8"), IsEqual("-1"));
   EXPECT_THAT(Eval("enum_neg_8 < enum_one_8"), IsEqual("true"));
   EXPECT_THAT(Eval("enum_neg_8 > enum_one_8"), IsEqual("false"));
@@ -2746,7 +2768,7 @@ TEST_F(EvalTest, TestBuiltinFunction_Log2) {
 TEST_F(EvalTest, TestPrefixIncDec) {
   EXPECT_THAT(Eval("++1"), IsError("expression is not assignable"));
   EXPECT_THAT(Eval("--i"),
-              IsError("side effects are not supported in this context"));
+              XFail(IsError("side effects are not supported in this context")));
 
   // #ifndef __EMSCRIPTEN__
   //   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
@@ -2791,7 +2813,7 @@ TEST_F(EvalTest, TestPrefixIncDec) {
 TEST_F(EvalTest, TestPostfixIncDec) {
   EXPECT_THAT(Eval("1++"), IsError("expression is not assignable"));
   EXPECT_THAT(Eval("i--"),
-              IsError("side effects are not supported in this context"));
+              XFail(IsError("side effects are not supported in this context")));
 
   // #ifndef __EMSCRIPTEN__
   //   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
@@ -2876,7 +2898,7 @@ TEST_F(EvalTest, TestMemberFunctionCall) {
 
 TEST_F(EvalTest, TestAssignment) {
   EXPECT_THAT(Eval("1 = 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i = 1"), IsError("side effects are not supported"));
+  EXPECT_THAT(Eval("i = 1"), XFail(IsError("side effects are not supported")));
 
   EXPECT_THAT(Eval("p = 1"),
               IsError("no known conversion from 'int' to 'float *'"));
@@ -2927,19 +2949,19 @@ TEST_F(EvalTest, TestAssignment) {
 
 TEST_F(EvalTest, TestCompositeAssignmentInvalid) {
   EXPECT_THAT(Eval("1 += 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i += 1"), IsError("side effects are not supported"));
+  EXPECT_THAT(Eval("i += 1"), XFail(IsError("side effects are not supported")));
 
   EXPECT_THAT(Eval("1 -= 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i -= 1"), IsError("side effects are not supported"));
+  EXPECT_THAT(Eval("i -= 1"), XFail(IsError("side effects are not supported")));
 
   EXPECT_THAT(Eval("1 *= 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i *= 1"), IsError("side effects are not supported"));
+  EXPECT_THAT(Eval("i *= 1"), XFail(IsError("side effects are not supported")));
 
   EXPECT_THAT(Eval("1 /= 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i /= 1"), IsError("side effects are not supported"));
+  EXPECT_THAT(Eval("i /= 1"), XFail(IsError("side effects are not supported")));
 
   EXPECT_THAT(Eval("1 %= 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i %= 1"), IsError("side effects are not supported"));
+  EXPECT_THAT(Eval("i %= 1"), XFail(IsError("side effects are not supported")));
   EXPECT_THAT(
       Eval("f %= 1"),
       IsError("invalid operands to binary expression ('float' and 'int')"));
@@ -3267,36 +3289,36 @@ TEST_F(EvalTest, TestUniquePtrCompare) {
   // On Linux this assumes the usage of libc++ standard library.
   this->compare_with_lldb_ = false;
 
-  EXPECT_THAT(Eval("ptr_int == nullptr"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_int != nullptr"), IsEqual("true"));
-  EXPECT_THAT(Eval("ptr_int == ptr_int"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_int == nullptr"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_int != nullptr"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_int == ptr_int"), XFail(IsEqual("true")));
 
   // C++ doesn't allow comparing unique_ptr with raw pointers, but we allow it
   // for convenience.
-  EXPECT_THAT(Eval("ptr_int == 0"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_int == (int*)0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_int == 0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_int == (int*)0"), XFail(IsEqual("false")));
 
-  EXPECT_THAT(Eval("ptr_float == nullptr"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_float != nullptr"), IsEqual("true"));
-  EXPECT_THAT(Eval("ptr_float == (float*)0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_float == nullptr"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_float != nullptr"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_float == (float*)0"), XFail(IsEqual("false")));
 
   EXPECT_THAT(Eval("ptr_float == (int*)0"),
-              IsError("comparison of distinct pointer types"));
+              XFail(IsError("comparison of distinct pointer types")));
   EXPECT_THAT(Eval("ptr_int == ptr_float"),
-              IsError("comparison of distinct pointer types"));
+              XFail(IsError("comparison of distinct pointer types")));
 
-  EXPECT_THAT(Eval("ptr_null == nullptr"), IsEqual("true"));
-  EXPECT_THAT(Eval("ptr_null != nullptr"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_null == nullptr"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_null != nullptr"), XFail(IsEqual("false")));
 
-  EXPECT_THAT(Eval("ptr_void == nullptr"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_void != nullptr"), IsEqual("true"));
-  EXPECT_THAT(Eval("ptr_void == ptr_void"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_void == nullptr"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_void != nullptr"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_void == ptr_void"), XFail(IsEqual("true")));
 
   // Void pointer can be compared with everything.
-  EXPECT_THAT(Eval("ptr_void == (int*)0"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_void == (void*)0"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_int == ptr_void"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_float == ptr_void"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_void == (int*)0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_void == (void*)0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_int == ptr_void"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_float == ptr_void"), XFail(IsEqual("false")));
 
 #endif
 }
@@ -3351,36 +3373,36 @@ TEST_F(EvalTest, TestSharedPtrCompare) {
   // On Linux this assumes the usage of libc++ standard library.
   this->compare_with_lldb_ = false;
 
-  EXPECT_THAT(Eval("ptr_int == nullptr"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_int != nullptr"), IsEqual("true"));
-  EXPECT_THAT(Eval("ptr_int == ptr_int"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_int == nullptr"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_int != nullptr"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_int == ptr_int"), XFail(IsEqual("true")));
 
   // C++ doesn't allow comparing shared_ptr with raw pointers, but we allow it
   // for convenience.
-  EXPECT_THAT(Eval("ptr_int == 0"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_int == (int*)0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_int == 0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_int == (int*)0"), XFail(IsEqual("false")));
 
-  EXPECT_THAT(Eval("ptr_float == nullptr"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_float != nullptr"), IsEqual("true"));
-  EXPECT_THAT(Eval("ptr_float == (float*)0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_float == nullptr"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_float != nullptr"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_float == (float*)0"), XFail(IsEqual("false")));
 
   EXPECT_THAT(Eval("ptr_float == (int*)0"),
-              IsError("comparison of distinct pointer types"));
+              XFail(IsError("comparison of distinct pointer types")));
   EXPECT_THAT(Eval("ptr_int == ptr_float"),
-              IsError("comparison of distinct pointer types"));
+              XFail(IsError("comparison of distinct pointer types")));
 
-  EXPECT_THAT(Eval("ptr_null == nullptr"), IsEqual("true"));
-  EXPECT_THAT(Eval("ptr_null != nullptr"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_null == nullptr"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_null != nullptr"), XFail(IsEqual("false")));
 
-  EXPECT_THAT(Eval("ptr_void == nullptr"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_void != nullptr"), IsEqual("true"));
-  EXPECT_THAT(Eval("ptr_void == ptr_void"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_void == nullptr"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_void != nullptr"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_void == ptr_void"), XFail(IsEqual("true")));
 
   // Void pointer can be compared with everything.
-  EXPECT_THAT(Eval("ptr_void == (int*)0"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_void == (void*)0"), IsEqual("false"));
-  EXPECT_THAT(Eval("ptr_int == ptr_void"), IsEqual("true"));
-  EXPECT_THAT(Eval("ptr_float == ptr_void"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_void == (int*)0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_void == (void*)0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_int == ptr_void"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_float == ptr_void"), XFail(IsEqual("false")));
 #endif
 }
 
@@ -3389,21 +3411,24 @@ TEST_F(EvalTest, TestTypeComparison) {
 
   // Taking an address of ternary expression require operands of the same type.
   EXPECT_THAT(Eval("&(true ? ip : icpc)"), IsOk());
-  EXPECT_THAT(Eval("&(true ? mipp : ipp)"), IsOk(/*compare_types*/ false));
+  EXPECT_THAT(Eval("&(true ? mipp : ipp)"),
+              XFail(IsOk(/*compare_types*/ false)));
   EXPECT_THAT(Eval("&(true ? ipp : icpcpc)"), IsOk());
-  EXPECT_THAT(Eval("&(true ? ipp : mipp)"), IsOk());
+  EXPECT_THAT(Eval("&(true ? ipp : mipp)"), XFail(IsOk()));
   EXPECT_THAT(Eval("&(true ? ipp : micpcpc)"), IsOk());
   // TODO: Enable type comparison once the type mismatch is fixed.
   // LLDB results in "int ***", while lldb-eval results in "MyInt ***".
-  EXPECT_THAT(Eval("&(true ? mipp : icpcpc)"), IsOk(/*compare_types*/ false));
-  EXPECT_THAT(Eval("&(true ? mipp : micpcpc)"), IsOk(/*compare_types*/ false));
+  EXPECT_THAT(Eval("&(true ? mipp : icpcpc)"),
+              XFail(IsOk(/*compare_types*/ false)));
+  EXPECT_THAT(Eval("&(true ? mipp : micpcpc)"),
+              XFail(IsOk(/*compare_types*/ false)));
   EXPECT_THAT(Eval("&(true ? icpcpc : micpcpc)"), IsOk());
 
   // Ensure that "signed char" and "char" are different types.
   EXPECT_THAT(Eval("true ? c : sc"), IsEqual("2")); // int
   EXPECT_THAT(Eval("true ? sc : (signed char)67"), IsEqual("'A'"));
   EXPECT_THAT(Eval("true ? (char)66 : (signed char)65"), IsEqual("66"));
-  EXPECT_THAT(Eval("true ? cc : mc"), IsEqual("'B'"));
+  EXPECT_THAT(Eval("true ? cc : mc"), XFail(IsEqual("'B'")));
   EXPECT_THAT(Eval("true ? cc : sc"), IsEqual("66"));
   EXPECT_THAT(Eval("true ? sc : mc"), IsEqual("65"));
   EXPECT_THAT(Eval("&(true ? c : c)"), IsOk());

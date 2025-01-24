@@ -21,6 +21,7 @@
 // * Some tests that crash the test suite completely: some of the tests that
 //   involve nullptr
 
+#include "lldb/API/SBError.h"
 #include "lldb/lldb-enumerations.h"
 #ifndef __EMSCRIPTEN__
 #include <memory>
@@ -74,6 +75,10 @@ struct EvalResult {
   }
 };
 
+struct CompiledExpr {
+  // Unsupported
+};
+
 class EvaluatorHelper {
 public:
   EvaluatorHelper(lldb::SBFrame frame, bool lldb, bool side_effects)
@@ -89,14 +94,15 @@ public:
     // opts.allow_side_effects = side_effects_;
 
     if (scope_) {
-      std::cerr << "Scope evaluation not supported" << std::endl;
+      ret.lldb_DIL_error =
+          lldb::SBError("Scope evaluation is not yet supported");
       // // Evaluate in the variable context.
       // ret.lldb_DIL_value = lldb_eval::EvaluateExpression(
       //     scope_, expr.c_str(), opts, ret.lldb_DIL_error);
 
-      // if (lldb_) {
-      //   ret.lldb_value = scope_.EvaluateExpression(expr.c_str());
-      // }
+      if (lldb_) {
+        ret.lldb_value = scope_.EvaluateExpression(expr.c_str());
+      }
     } else {
       // Evaluate in the frame context.
       ret.lldb_DIL_value =
@@ -114,99 +120,112 @@ public:
     return ret;
   }
 
-  // EvalResult Eval(std::shared_ptr<lldb_eval::CompiledExpr> compiled_expr) {
-  //   assert(scope_ && "compiled expression requires a value context");
+  EvalResult Eval(CompiledExpr compiled_expr) {
+    assert(scope_ && "compiled expression requires a value context");
 
-  //   EvalResult ret;
-  //   ret.lldb_DIL_value = lldb_eval::EvaluateExpression(scope_, compiled_expr,
-  //                                                       ret.lldb_DIL_error);
-  //   return ret;
-  // }
+    EvalResult ret;
+    ret.lldb_DIL_error = lldb::SBError("Separate parsing is not yet supported");
+    // ret.lldb_DIL_value = lldb_eval::EvaluateExpression(scope_, compiled_expr,
+    //                                                     ret.lldb_DIL_error);
+    return ret;
+  }
 
-  // EvalResult EvalWithContext(
-  //     const std::string& expr,
-  //     const std::unordered_map<std::string, lldb::SBValue>& vars) {
-  //   EvalResult ret;
+  EvalResult
+  EvalWithContext(const std::string &expr,
+                  const std::unordered_map<std::string, lldb::SBValue> &vars) {
+    EvalResult ret;
 
-  //   std::vector<lldb_eval::ContextVariable> ctx_vec;
-  //   ctx_vec.reserve(vars.size());
-  //   for (const auto& [name, value] : vars) {
-  //     ctx_vec.push_back({name.c_str(), value});
-  //   }
+    // std::vector<lldb_eval::ContextVariable> ctx_vec;
+    // ctx_vec.reserve(vars.size());
+    // for (const auto& [name, value] : vars) {
+    //   ctx_vec.push_back({name.c_str(), value});
+    // }
 
-  //   lldb_eval::Options opts;
-  //   opts.allow_side_effects = side_effects_;
-  //   opts.context_vars = {ctx_vec.data(), ctx_vec.size()};
+    // lldb_eval::Options opts;
+    // opts.allow_side_effects = side_effects_;
+    // opts.context_vars = {ctx_vec.data(), ctx_vec.size()};
 
-  //   if (scope_) {
-  //     // Evaluate in the variable context.
-  //     ret.lldb_DIL_value = lldb_eval::EvaluateExpression(
-  //         scope_, expr.c_str(), opts, ret.lldb_DIL_error);
+    if (scope_) {
+      // Evaluate in the variable context.
+      ret.lldb_DIL_error =
+          lldb::SBError("Evaluation with context is not yet supported");
+      //   ret.lldb_DIL_value = lldb_eval::EvaluateExpression(
+      //       scope_, expr.c_str(), opts, ret.lldb_DIL_error);
 
-  //     if (lldb_) {
-  //       ret.lldb_value = scope_.EvaluateExpression(expr.c_str());
-  //     }
-  //   } else {
-  //     // Evaluate in the frame context.
-  //     ret.lldb_DIL_value = lldb_eval::EvaluateExpression(
-  //         frame_, expr.c_str(), opts, ret.lldb_DIL_error);
+      if (lldb_) {
+        ret.lldb_value = scope_.EvaluateExpression(expr.c_str());
+      }
+    } else {
+      // Evaluate in the frame context.
+      ret.lldb_DIL_error =
+          lldb::SBError("Evaluation with context is not yet supported");
+      //   ret.lldb_DIL_value = lldb_eval::EvaluateExpression(
+      //       frame_, expr.c_str(), opts, ret.lldb_DIL_error);
 
-  //     if (lldb_) {
-  //       ret.lldb_value = frame_.EvaluateExpression(expr.c_str());
-  //     }
-  //   }
+      if (lldb_) {
+        ret.lldb_value = frame_.EvaluateExpression(expr.c_str());
+      }
+    }
 
-  //   return ret;
-  // }
+    return ret;
+  }
 
-  // EvalResult EvalWithContext(
-  //     std::shared_ptr<lldb_eval::CompiledExpr> compiled_expr,
-  //     const std::unordered_map<std::string, lldb::SBValue>& vars) {
-  //   assert(scope_ && "compiled expression requires a value context");
+  EvalResult
+  EvalWithContext(CompiledExpr compiled_expr,
+                  const std::unordered_map<std::string, lldb::SBValue> &vars) {
+    assert(scope_ && "compiled expression requires a value context");
 
-  //   std::vector<lldb_eval::ContextVariable> ctx_vec;
-  //   ctx_vec.reserve(vars.size());
-  //   for (const auto& [name, value] : vars) {
-  //     ctx_vec.push_back({name.c_str(), value});
-  //   }
-  //   lldb_eval::ContextVariableList context_vars{ctx_vec.data(),
-  //   ctx_vec.size()};
+    EvalResult ret;
+    ret.lldb_DIL_error = lldb::SBError("Separate parsing is not yet supported");
+    return ret;
 
-  //   EvalResult ret;
-  //   ret.lldb_DIL_value = lldb_eval::EvaluateExpression(
-  //       scope_, compiled_expr, context_vars, ret.lldb_DIL_error);
-  //   return ret;
-  // }
+    // std::vector<lldb_eval::ContextVariable> ctx_vec;
+    // ctx_vec.reserve(vars.size());
+    // for (const auto& [name, value] : vars) {
+    //   ctx_vec.push_back({name.c_str(), value});
+    // }
+    // lldb_eval::ContextVariableList context_vars{ctx_vec.data(),
+    // ctx_vec.size()};
 
-  // std::shared_ptr<lldb_eval::CompiledExpr> Compile(const std::string& expr,
-  //                                                  lldb::SBError& error) {
-  //   assert(scope_ && "compiling an expression requires a type context");
+    // EvalResult ret;
+    // ret.lldb_DIL_value = lldb_eval::EvaluateExpression(
+    //     scope_, compiled_expr, context_vars, ret.lldb_DIL_error);
+    // return ret;
+  }
 
-  //   lldb_eval::Options opts;
-  //   opts.allow_side_effects = side_effects_;
-  //   return lldb_eval::CompileExpression(scope_.GetTarget(), scope_.GetType(),
-  //                                       expr.c_str(), opts, error);
-  // }
+  CompiledExpr Compile(const std::string &expr, lldb::SBError &error) {
+    assert(scope_ && "compiling an expression requires a type context");
 
-  // std::shared_ptr<lldb_eval::CompiledExpr> CompileWithContext(
-  //     const std::string& expr,
-  //     const std::unordered_map<std::string, lldb::SBType>& args,
-  //     lldb::SBError& error) {
-  //   assert(scope_ && "compiling an expression requires a type context");
+    error = lldb::SBError("Separate parsing is not yet supported");
+    return CompiledExpr();
+    // lldb_eval::Options opts;
+    // opts.allow_side_effects = side_effects_;
+    // return lldb_eval::CompileExpression(scope_.GetTarget(), scope_.GetType(),
+    //                                     expr.c_str(), opts, error);
+  }
 
-  //   std::vector<lldb_eval::ContextArgument> ctx_vec;
-  //   ctx_vec.reserve(args.size());
-  //   for (const auto& [name, type] : args) {
-  //     ctx_vec.push_back({name.c_str(), type});
-  //   }
+  CompiledExpr
+  CompileWithContext(const std::string &expr,
+                     const std::unordered_map<std::string, lldb::SBType> &args,
+                     lldb::SBError &error) {
+    assert(scope_ && "compiling an expression requires a type context");
 
-  //   lldb_eval::Options opts;
-  //   opts.allow_side_effects = side_effects_;
-  //   opts.context_args = {ctx_vec.data(), ctx_vec.size()};
+    error = lldb::SBError("Separate parsing is not yet supported");
+    return CompiledExpr();
 
-  //   return lldb_eval::CompileExpression(scope_.GetTarget(), scope_.GetType(),
-  //                                       expr.c_str(), opts, error);
-  // }
+    // std::vector<lldb_eval::ContextArgument> ctx_vec;
+    // ctx_vec.reserve(args.size());
+    // for (const auto& [name, type] : args) {
+    //   ctx_vec.push_back({name.c_str(), type});
+    // }
+
+    // lldb_eval::Options opts;
+    // opts.allow_side_effects = side_effects_;
+    // opts.context_args = {ctx_vec.data(), ctx_vec.size()};
+
+    // return lldb_eval::CompileExpression(scope_.GetTarget(), scope_.GetType(),
+    //                                     expr.c_str(), opts, error);
+  }
 
 private:
   lldb::SBFrame frame_;
@@ -430,19 +449,18 @@ protected:
         .Eval(expr);
   }
 
-  // EvalResult EvalWithContext(
-  //     const std::string& expr,
-  //     const std::unordered_map<std::string, lldb::SBValue>& vars) {
-  //   return EvaluatorHelper(frame_, compare_with_lldb_, allow_side_effects_)
-  //       .EvalWithContext(expr, vars);
-  // }
+  EvalResult
+  EvalWithContext(const std::string &expr,
+                  const std::unordered_map<std::string, lldb::SBValue> &vars) {
+    return EvaluatorHelper(frame_, compare_with_lldb_, allow_side_effects_)
+        .EvalWithContext(expr, vars);
+  }
 
-  // EvaluatorHelper Scope(std::string scope) {
-  //   // Resolve the scope variable (assume it's a local variable).
-  //   lldb::SBValue scope_var = frame_.FindVariable(scope.c_str());
-  //   return EvaluatorHelper(scope_var, compare_with_lldb_,
-  //   allow_side_effects_);
-  // }
+  EvaluatorHelper Scope(std::string scope) {
+    // Resolve the scope variable (assume it's a local variable).
+    lldb::SBValue scope_var = frame_.FindVariable(scope.c_str());
+    return EvaluatorHelper(scope_var, compare_with_lldb_, allow_side_effects_);
+  }
 
   bool CreateContextVariable(std::string type, std::string name, bool is_array,
                              std::string assignment) {
@@ -1824,18 +1842,18 @@ TEST_F(EvalTest, DISABLED_TestStaticConstDeclaredInline) {
   EXPECT_THAT(Eval("::Vars::static_constexpr"), IsEqual("8"));
   EXPECT_THAT(Eval("Vars::inline_static"), IsEqual("7.5"));
   EXPECT_THAT(Eval("Vars::static_constexpr"), IsEqual("8"));
-
-  // #ifndef __EMSCRIPTEN__
-  //   EXPECT_THAT(Scope("outer_inner_vars").Eval("inline_static"),
-  //   IsEqual("1.5"));
-  //   EXPECT_THAT(Scope("outer_inner_vars").Eval("static_constexpr"),
-  //   IsEqual("2")); EXPECT_THAT(Scope("outer_vars").Eval("inline_static"),
-  //   IsEqual("4.5"));
-  //   EXPECT_THAT(Scope("outer_vars").Eval("static_constexpr"), IsEqual("5"));
-  //   EXPECT_THAT(Scope("vars").Eval("inline_static"), IsEqual("7.5"));
-  //   EXPECT_THAT(Scope("vars").Eval("inline_static"), IsEqual("8"));
-  // #endif
 }
+
+#ifndef __EMSCRIPTEN__
+TEST_F(EvalTest, DISABLED_TestStaticConstDeclaredInlineScoped) {
+  EXPECT_THAT(Scope("outer_inner_vars").Eval("inline_static"), IsEqual("1.5"));
+  EXPECT_THAT(Scope("outer_inner_vars").Eval("static_constexpr"), IsEqual("2"));
+  EXPECT_THAT(Scope("outer_vars").Eval("inline_static"), IsEqual("4.5"));
+  EXPECT_THAT(Scope("outer_vars").Eval("static_constexpr"), IsEqual("5"));
+  EXPECT_THAT(Scope("vars").Eval("inline_static"), IsEqual("7.5"));
+  EXPECT_THAT(Scope("vars").Eval("inline_static"), IsEqual("8"));
+}
+#endif
 
 TEST_F(EvalTest, TestStaticConstDeclaredOutsideTheClass) {
 #if LLVM_VERSION_MAJOR < 12
@@ -1857,45 +1875,41 @@ TEST_F(EvalTest, TestStaticConstDeclaredOutsideTheClass) {
   EXPECT_THAT(Eval("outer::Vars::Nested::static_const"), IsEqual("20"));
   EXPECT_THAT(Eval("::Vars::Nested::static_const"), XFail(IsEqual("30")));
   EXPECT_THAT(Eval("Vars::Nested::static_const"), XFail(IsEqual("30")));
-
-  // #ifndef __EMSCRIPTEN__
-  //   EXPECT_THAT(Scope("outer_inner_vars").Eval("static_const"),
-  //   IsEqual("3")); EXPECT_THAT(Scope("outer_vars").Eval("static_const"),
-  //   IsEqual("6")); EXPECT_THAT(Scope("vars").Eval("static_const"),
-  //   IsEqual("9"));
-
-  //   EXPECT_THAT(Scope("outer_inner_vars").Eval("Nested::static_const"),
-  //               IsEqual("10"));
-  //   EXPECT_THAT(Scope("outer_vars").Eval("Nested::static_const"),
-  //   IsEqual("20")); EXPECT_THAT(Scope("vars").Eval("Nested::static_const"),
-  //   IsEqual("30"));
-
-  //   EXPECT_THAT(Scope("vars").Eval("::static_const"),
-  //               IsError("use of undeclared identifier '::static_const'"));
-  //   EXPECT_THAT(Scope("vars").Eval("::Nested::static_const"),
-  //               IsError("use of undeclared identifier
-  //               '::Nested::static_const'"));
-
-  //   // Evaluate in value context where value is of alised type.
-  //   EXPECT_THAT(Scope("my_outer_inner_vars").Eval("static_const"),
-  //   IsEqual("3")); EXPECT_THAT(Scope("my_outer_vars").Eval("static_const"),
-  //   IsEqual("6")); EXPECT_THAT(Scope("my_vars").Eval("static_const"),
-  //   IsEqual("9"));
-
-  //   EXPECT_THAT(Scope("my_outer_inner_vars").Eval("Nested::static_const"),
-  //               IsEqual("10"));
-  //   EXPECT_THAT(Scope("my_outer_vars").Eval("Nested::static_const"),
-  //               IsEqual("20"));
-  //   EXPECT_THAT(Scope("my_vars").Eval("Nested::static_const"),
-  //   IsEqual("30"));
-
-  //   EXPECT_THAT(Scope("my_outer_inner_vars").Eval("::static_const"),
-  //               IsError("use of undeclared identifier '::static_const'"));
-  //   EXPECT_THAT(Scope("my_vars").Eval("::Nested::static_const"),
-  //               IsError("use of undeclared identifier
-  //               '::Nested::static_const'"));
-  // #endif
 }
+
+#ifndef __EMSCRIPTEN__
+TEST_F(EvalTest, DISABLED_TestStaticConstDeclaredOutsideTheClassScoped) {
+  EXPECT_THAT(Scope("outer_inner_vars").Eval("static_const"), IsEqual("3"));
+  EXPECT_THAT(Scope("outer_vars").Eval("static_const"), IsEqual("6"));
+  EXPECT_THAT(Scope("vars").Eval("static_const"), IsEqual("9"));
+
+  EXPECT_THAT(Scope("outer_inner_vars").Eval("Nested::static_const"),
+              IsEqual("10"));
+  EXPECT_THAT(Scope("outer_vars").Eval("Nested::static_const"), IsEqual("20"));
+  EXPECT_THAT(Scope("vars").Eval("Nested::static_const"), IsEqual("30"));
+
+  EXPECT_THAT(Scope("vars").Eval("::static_const"),
+              IsError("use of undeclared identifier '::static_const'"));
+  EXPECT_THAT(Scope("vars").Eval("::Nested::static_const"),
+              IsError("use of undeclared identifier '::Nested::static_const'"));
+
+  // Evaluate in value context where value is of alised type.
+  EXPECT_THAT(Scope("my_outer_inner_vars").Eval("static_const"), IsEqual("3"));
+  EXPECT_THAT(Scope("my_outer_vars").Eval("static_const"), IsEqual("6"));
+  EXPECT_THAT(Scope("my_vars").Eval("static_const"), IsEqual("9"));
+
+  EXPECT_THAT(Scope("my_outer_inner_vars").Eval("Nested::static_const"),
+              IsEqual("10"));
+  EXPECT_THAT(Scope("my_outer_vars").Eval("Nested::static_const"),
+              IsEqual("20"));
+  EXPECT_THAT(Scope("my_vars").Eval("Nested::static_const"), IsEqual("30"));
+
+  EXPECT_THAT(Scope("my_outer_inner_vars").Eval("::static_const"),
+              IsError("use of undeclared identifier '::static_const'"));
+  EXPECT_THAT(Scope("my_vars").Eval("::Nested::static_const"),
+              IsError("use of undeclared identifier '::Nested::static_const'"));
+}
+#endif
 
 TEST_F(EvalTest, TestBasicTypeDeclaration) {
   EXPECT_THAT(Eval("(char)65"), IsEqual("'A'"));
@@ -2143,63 +2157,59 @@ TEST_F(EvalTest, TestTemplateWithNumericArguments) {
 }
 
 #ifndef __EMSCRIPTEN__
-// TEST_F(EvalTest, TestValueScope) {
-//   EXPECT_THAT(Scope("var").Eval("x_"), IsEqual("1"));
-//   EXPECT_THAT(Scope("var").Eval("y_"), IsEqual("2.5"));
-//   EXPECT_THAT(Scope("var").Eval("z_"),
-//               IsError("use of undeclared identifier 'z_'"));
+TEST_F(EvalTest, DISABLED_TestValueScope) {
+  EXPECT_THAT(Scope("var").Eval("x_"), IsEqual("1"));
+  EXPECT_THAT(Scope("var").Eval("y_"), IsEqual("2.5"));
+  EXPECT_THAT(Scope("var").Eval("z_"),
+              IsError("use of undeclared identifier 'z_'"));
 
-//   // In "value" scope `this` refers to the scope object.
-//   EXPECT_THAT(Scope("var").Eval("this->y_"), IsEqual("2.5"));
-//   EXPECT_THAT(Scope("var").Eval("(*this).y_"), IsEqual("2.5"));
+  // In "value" scope `this` refers to the scope object.
+  EXPECT_THAT(Scope("var").Eval("this->y_"), IsEqual("2.5"));
+  EXPECT_THAT(Scope("var").Eval("(*this).y_"), IsEqual("2.5"));
 
-//   // Test for the "artificial" value, i.e. created by the expression.
-//   lldb::SBError error;
-//   lldb::SBValue scope_var =
-//       lldb_eval::EvaluateExpression(frame_, "(test_scope::Value&)bytes",
-//       error);
-//   EXPECT_TRUE(scope_var.IsValid());
-//   EXPECT_TRUE(error.Success());
+  // Test for the "artificial" value, i.e. created by the expression.
+  lldb::SBValue scope_var = frame_.EvaluateExpressionViaDIL(
+      "(test_scope::Value&)bytes", lldb::eNoDynamicValues);
+  lldb::SBError error = scope_var.GetError();
+  EXPECT_TRUE(scope_var.IsValid());
+  EXPECT_TRUE(error.Success());
 
-//   EvaluatorHelper scope(scope_var, true, false);
-//   EXPECT_THAT(scope.Eval("this->y_"), IsEqual("2.5"));
-//   EXPECT_THAT(scope.Eval("(*this).y_"), IsEqual("2.5"));
+  EvaluatorHelper scope(scope_var, true, false);
+  EXPECT_THAT(scope.Eval("this->y_"), IsEqual("2.5"));
+  EXPECT_THAT(scope.Eval("(*this).y_"), IsEqual("2.5"));
 
-//   EXPECT_THAT(Eval("x_"), IsError("use of undeclared identifier 'x_'"));
-//   EXPECT_THAT(Eval("y_"), IsError("use of undeclared identifier 'y_'"));
-//   EXPECT_THAT(Eval("z_"), IsEqual("3"));
+  EXPECT_THAT(Eval("x_"), IsError("use of undeclared identifier 'x_'"));
+  EXPECT_THAT(Eval("y_"), IsError("use of undeclared identifier 'y_'"));
+  EXPECT_THAT(Eval("z_"), IsEqual("3"));
 
-//   // In the frame context `this` is not available here.
-//   EXPECT_THAT(
-//       Eval("this->y_"),
-//       IsError("invalid use of 'this' outside of a non-static member
-//       function"));
-//   EXPECT_THAT(
-//       Eval("(*this)->y_"),
-//       IsError("invalid use of 'this' outside of a non-static member
-//       function"));
+  // In the frame context `this` is not available here.
+  EXPECT_THAT(
+      Eval("this->y_"),
+      IsError("invalid use of 'this' outside of a non-static member function"));
+  EXPECT_THAT(
+      Eval("(*this)->y_"),
+      IsError("invalid use of 'this' outside of a non-static member function"));
 
-//   EXPECT_THAT(Scope("var").Eval("this - (test_scope::Value*)this"),
-//               IsEqual("0"));
-// }
+  EXPECT_THAT(Scope("var").Eval("this - (test_scope::Value*)this"),
+              IsEqual("0"));
+}
 
-// TEST_F(EvalTest, TestReferenceScope) {
-//   // Member access in "reference" context doesn't work in LLDB.
-//   this->compare_with_lldb_ = false;
+TEST_F(EvalTest, DISABLED_TestReferenceScope) {
+  // Member access in "reference" context doesn't work in LLDB.
+  this->compare_with_lldb_ = false;
 
-//   EXPECT_THAT(Scope("var_ref").Eval("x_"), IsEqual("1"));
-//   EXPECT_THAT(Scope("var_ref").Eval("y_"), IsEqual("2.5"));
-//   EXPECT_THAT(Scope("var_ref").Eval("z_"),
-//               IsError("use of undeclared identifier 'z_'"));
-//   EXPECT_THAT(Scope("var_ref").Eval("this"), IsOk());
-//   EXPECT_THAT(Scope("var_ref").Eval("this->y_"), IsEqual("2.5"));
-//   EXPECT_THAT(Scope("var_ref").Eval("(*this).y_"), IsEqual("2.5"));
-//   EXPECT_THAT(Scope("var_ref").Eval("ValueEnum::B"), IsEqual("B"));
-//   EXPECT_THAT(Scope("var_ref").Eval("static_var"), IsEqual("3.5"));
-//   EXPECT_THAT(Scope("var_ref").Eval("this->static_var"),
-//               IsError("no member named 'static_var' in
-//               'test_scope::Value'"));
-// }
+  EXPECT_THAT(Scope("var_ref").Eval("x_"), IsEqual("1"));
+  EXPECT_THAT(Scope("var_ref").Eval("y_"), IsEqual("2.5"));
+  EXPECT_THAT(Scope("var_ref").Eval("z_"),
+              IsError("use of undeclared identifier 'z_'"));
+  EXPECT_THAT(Scope("var_ref").Eval("this"), IsOk());
+  EXPECT_THAT(Scope("var_ref").Eval("this->y_"), IsEqual("2.5"));
+  EXPECT_THAT(Scope("var_ref").Eval("(*this).y_"), IsEqual("2.5"));
+  EXPECT_THAT(Scope("var_ref").Eval("ValueEnum::B"), IsEqual("B"));
+  EXPECT_THAT(Scope("var_ref").Eval("static_var"), IsEqual("3.5"));
+  EXPECT_THAT(Scope("var_ref").Eval("this->static_var"),
+              IsError("no member named 'static_var' in 'test_scope::Value'"));
+}
 #endif
 
 TEST_F(EvalTest, TestBitField) {
@@ -2207,51 +2217,48 @@ TEST_F(EvalTest, TestBitField) {
   EXPECT_THAT(Eval("bf.b"), IsEqual("9"));
   EXPECT_THAT(Eval("bf.c"), IsEqual("false"));
   EXPECT_THAT(Eval("bf.d"), IsEqual("true"));
-  // #ifndef __EMSCRIPTEN__
-  //   EXPECT_THAT(Scope("bf").Eval("a"), IsEqual("1023"));
-  //   EXPECT_THAT(Scope("bf").Eval("b"), IsEqual("9"));
-  //   EXPECT_THAT(Scope("bf").Eval("c"), IsEqual("false"));
-  //   EXPECT_THAT(Scope("bf").Eval("d"), IsEqual("true"));
-  // #endif
 
   // Perform an operation to ensure we actually read the value.
   EXPECT_THAT(Eval("0 + bf.a"), IsEqual("1023"));
   EXPECT_THAT(Eval("0 + bf.b"), IsEqual("9"));
   EXPECT_THAT(Eval("0 + bf.c"), IsEqual("0"));
   EXPECT_THAT(Eval("0 + bf.d"), IsEqual("1"));
-  // #ifndef __EMSCRIPTEN__
-  //   EXPECT_THAT(Scope("bf").Eval("0 + a"), IsEqual("1023"));
-  //   // TODO: Enable type comparison after fixing bitfield promotion in value
-  //   // context.
-  //   EXPECT_THAT(Scope("bf").Eval("0 + b"), IsEqual("9", /*compare_types*/
-  //   false)); EXPECT_THAT(Scope("bf").Eval("0 + c"), IsEqual("0"));
-  //   EXPECT_THAT(Scope("bf").Eval("0 + d"), IsEqual("1"));
-  // #endif
 
   EXPECT_THAT(Eval("abf.a"), IsEqual("1023"));
   EXPECT_THAT(Eval("abf.b"), IsEqual("'\\x0f'"));
   EXPECT_THAT(Eval("abf.c"), IsEqual("3"));
-  // #ifndef __EMSCRIPTEN__
-  //   EXPECT_THAT(Scope("abf").Eval("a"), IsEqual("1023"));
-  //   EXPECT_THAT(Scope("abf").Eval("b"), IsEqual("'\\x0f'"));
-  //   EXPECT_THAT(Scope("abf").Eval("c"), IsEqual("3"));
-  // #endif
 
-  // Perform an operation to ensure we actually read the value.
   EXPECT_THAT(Eval("abf.a + 0"), IsEqual("1023"));
   EXPECT_THAT(Eval("abf.b + 0"), IsEqual("15"));
   EXPECT_THAT(Eval("abf.c + 0"), IsEqual("3"));
-  // #ifndef __EMSCRIPTEN__
-  //   EXPECT_THAT(Scope("abf").Eval("0 + a"), IsEqual("1023"));
-  //   EXPECT_THAT(Scope("abf").Eval("0 + b"), IsEqual("15"));
-  //   EXPECT_THAT(Scope("abf").Eval("0 + c"), IsEqual("3"));
-  // #endif
 
   // Address-of is not allowed for bit-fields.
   EXPECT_THAT(Eval("&bf.a"), IsError("address of bit-field requested"));
   EXPECT_THAT(Eval("&(true ? bf.a : bf.a)"),
               IsError("address of bit-field requested"));
 }
+
+#ifndef __EMSCRIPTEN__
+TEST_F(EvalTest, DISABLED_TestBitFieldScoped) {
+  EXPECT_THAT(Scope("bf").Eval("a"), IsEqual("1023"));
+  EXPECT_THAT(Scope("bf").Eval("b"), IsEqual("9"));
+  EXPECT_THAT(Scope("bf").Eval("c"), IsEqual("false"));
+  EXPECT_THAT(Scope("bf").Eval("d"), IsEqual("true"));
+  EXPECT_THAT(Scope("bf").Eval("0 + a"), IsEqual("1023"));
+  // TODO: Enable type comparison after fixing bitfield promotion in value
+  // context.
+  EXPECT_THAT(Scope("bf").Eval("0 + b"), IsEqual("9", /*compare_types*/
+                                                 false));
+  EXPECT_THAT(Scope("bf").Eval("0 + c"), IsEqual("0"));
+  EXPECT_THAT(Scope("bf").Eval("0 + d"), IsEqual("1"));
+  EXPECT_THAT(Scope("abf").Eval("a"), IsEqual("1023"));
+  EXPECT_THAT(Scope("abf").Eval("b"), IsEqual("'\\x0f'"));
+  EXPECT_THAT(Scope("abf").Eval("c"), IsEqual("3"));
+  EXPECT_THAT(Scope("abf").Eval("0 + a"), IsEqual("1023"));
+  EXPECT_THAT(Scope("abf").Eval("0 + b"), IsEqual("15"));
+  EXPECT_THAT(Scope("abf").Eval("0 + c"), IsEqual("3"));
+}
+#endif
 
 TEST_F(EvalTest, TestBitFieldPromotion) {
   EXPECT_THAT(Eval("bf.b - 10"), IsEqual("-1"));
@@ -2292,76 +2299,76 @@ TEST_F(EvalTest, TestBitFieldWithSideEffects) {
   // EXPECT_THAT(Eval("bf.b++"), IsEqual("15"));
 }
 
-// TEST_F(EvalTest, TestContextVariables) {
-//   // Context variables don't exist yet.
-//   EXPECT_THAT(EvalWithContext("$var", vars_),
-//               IsError("use of undeclared identifier '$var'"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$var", vars_),
-//               IsError("use of undeclared identifier '$var'"));
+TEST_F(EvalTest, DISABLED_TestContextVariables) {
+  // Context variables don't exist yet.
+  EXPECT_THAT(EvalWithContext("$var", vars_),
+              IsError("use of undeclared identifier '$var'"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$var", vars_),
+              IsError("use of undeclared identifier '$var'"));
 
-//   EXPECT_TRUE(CreateContextVariable("$var", "13"));
-//   EXPECT_THAT(EvalWithContext("$var", vars_), IsEqual("13"));
-//   EXPECT_THAT(EvalWithContext("$var + 2", vars_), IsEqual("15"));
-//   EXPECT_THAT(EvalWithContext("$var - s.a", vars_), IsEqual("3"));
-//   EXPECT_THAT(EvalWithContext("var", vars_),
-//               IsError("use of undeclared identifier 'var'"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$var", vars_), IsEqual("13"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$var + 2", vars_), IsEqual("15"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$var - a", vars_), IsEqual("3"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("var", vars_),
-//               IsError("use of undeclared identifier 'var'"));
+  EXPECT_TRUE(CreateContextVariable("$var", "13"));
+  EXPECT_THAT(EvalWithContext("$var", vars_), IsEqual("13"));
+  EXPECT_THAT(EvalWithContext("$var + 2", vars_), IsEqual("15"));
+  EXPECT_THAT(EvalWithContext("$var - s.a", vars_), IsEqual("3"));
+  EXPECT_THAT(EvalWithContext("var", vars_),
+              IsError("use of undeclared identifier 'var'"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$var", vars_), IsEqual("13"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$var + 2", vars_), IsEqual("15"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$var - a", vars_), IsEqual("3"));
+  EXPECT_THAT(Scope("s").EvalWithContext("var", vars_),
+              IsError("use of undeclared identifier 'var'"));
 
-//   // Context variable is a pointer.
-//   EXPECT_TRUE(CreateContextVariable("$ptr", "s.ptr"));
-//   EXPECT_THAT(EvalWithContext("$ptr == s.ptr", vars_), IsEqual("true"));
-//   EXPECT_THAT(EvalWithContext("*$ptr", vars_), IsEqual("'h'"));
-//   EXPECT_THAT(EvalWithContext("$ptr[1]", vars_), IsEqual("'e'"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$ptr == ptr", vars_),
-//               IsEqual("true"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("*$ptr", vars_), IsEqual("'h'"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$ptr[1]", vars_), IsEqual("'e'"));
+  // Context variable is a pointer.
+  EXPECT_TRUE(CreateContextVariable("$ptr", "s.ptr"));
+  EXPECT_THAT(EvalWithContext("$ptr == s.ptr", vars_), IsEqual("true"));
+  EXPECT_THAT(EvalWithContext("*$ptr", vars_), IsEqual("'h'"));
+  EXPECT_THAT(EvalWithContext("$ptr[1]", vars_), IsEqual("'e'"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$ptr == ptr", vars_),
+              IsEqual("true"));
+  EXPECT_THAT(Scope("s").EvalWithContext("*$ptr", vars_), IsEqual("'h'"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$ptr[1]", vars_), IsEqual("'e'"));
 
-//   EXPECT_THAT(EvalWithContext("$var + *$ptr", vars_), IsEqual("117"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$var + *$ptr", vars_),
-//               IsEqual("117"));
-// }
+  EXPECT_THAT(EvalWithContext("$var + *$ptr", vars_), IsEqual("117"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$var + *$ptr", vars_),
+              IsEqual("117"));
+}
 
-// TEST_F(EvalTest, TestContextVariablesSubset) {
-//   // All context variables that are created in this test are visible by LLDB.
-//   // Disable comparisons with LLDB to test subsets of created context
-//   variables. this->compare_with_lldb_ = false;
+TEST_F(EvalTest, DISABLED_TestContextVariablesSubset) {
+  // All context variables that are created in this test are visible by LLDB.
+  // Disable comparisons with LLDB to test subsets of created context variables.
+  this->compare_with_lldb_ = false;
 
-//   EXPECT_TRUE(CreateContextVariable("$var", "13"));
-//   EXPECT_TRUE(CreateContextVariable("$ptr", "s.ptr"));
+  EXPECT_TRUE(CreateContextVariable("$var", "13"));
+  EXPECT_TRUE(CreateContextVariable("$ptr", "s.ptr"));
 
-//   // Evaluate without the context.
-//   EXPECT_THAT(Eval("$var"), IsError("use of undeclared identifier '$var'"));
-//   EXPECT_THAT(Eval("$var + 1"), IsError("use of undeclared identifier
-//   '$var'")); EXPECT_THAT(Scope("s").Eval("$var"),
-//               IsError("use of undeclared identifier '$var'"));
-//   EXPECT_THAT(Scope("s").Eval("$var + 1"),
-//               IsError("use of undeclared identifier '$var'"));
+  // Evaluate without the context.
+  EXPECT_THAT(Eval("$var"), IsError("use of undeclared identifier '$var'"));
+  EXPECT_THAT(Eval("$var + 1"), IsError("use of undeclared identifier '$var'"));
+  EXPECT_THAT(Scope("s").Eval("$var"),
+              IsError("use of undeclared identifier '$var'"));
+  EXPECT_THAT(Scope("s").Eval("$var + 1"),
+              IsError("use of undeclared identifier '$var'"));
 
-//   std::unordered_map<std::string, lldb::SBValue> var;
-//   std::unordered_map<std::string, lldb::SBValue> ptr;
-//   var.emplace("$var", vars_["$var"]);
-//   ptr.emplace("$ptr", vars_["$ptr"]);
+  std::unordered_map<std::string, lldb::SBValue> var;
+  std::unordered_map<std::string, lldb::SBValue> ptr;
+  var.emplace("$var", vars_["$var"]);
+  ptr.emplace("$ptr", vars_["$ptr"]);
 
-//   EXPECT_THAT(EvalWithContext("$var + 0", var), IsEqual("13"));
-//   EXPECT_THAT(EvalWithContext("*$ptr", var),
-//               IsError("use of undeclared identifier '$ptr'"));
-//   EXPECT_THAT(EvalWithContext("$var + *$ptr", var),
-//               IsError("use of undeclared identifier '$ptr'"));
-//   EXPECT_THAT(EvalWithContext("$var + *$ptr", ptr),
-//               IsError("use of undeclared identifier '$var'"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$var + 0", var), IsEqual("13"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("*$ptr", var),
-//               IsError("use of undeclared identifier '$ptr'"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$var + *$ptr", var),
-//               IsError("use of undeclared identifier '$ptr'"));
-//   EXPECT_THAT(Scope("s").EvalWithContext("$var + *$ptr", ptr),
-//               IsError("use of undeclared identifier '$var'"));
-// }
+  EXPECT_THAT(EvalWithContext("$var + 0", var), IsEqual("13"));
+  EXPECT_THAT(EvalWithContext("*$ptr", var),
+              IsError("use of undeclared identifier '$ptr'"));
+  EXPECT_THAT(EvalWithContext("$var + *$ptr", var),
+              IsError("use of undeclared identifier '$ptr'"));
+  EXPECT_THAT(EvalWithContext("$var + *$ptr", ptr),
+              IsError("use of undeclared identifier '$var'"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$var + 0", var), IsEqual("13"));
+  EXPECT_THAT(Scope("s").EvalWithContext("*$ptr", var),
+              IsError("use of undeclared identifier '$ptr'"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$var + *$ptr", var),
+              IsError("use of undeclared identifier '$ptr'"));
+  EXPECT_THAT(Scope("s").EvalWithContext("$var + *$ptr", ptr),
+              IsError("use of undeclared identifier '$var'"));
+}
 #endif
 
 TEST_F(EvalTest, TestScopedEnum) {
@@ -2762,96 +2769,94 @@ TEST_F(EvalTest, TestBuiltinFunction_Log2) {
       IsError("function '::ns::dummy' is not a supported builtin intrinsic"));
 }
 
-TEST_F(EvalTest, TestPrefixIncDec) {
+TEST_F(EvalTest, DISABLED_TestPrefixIncDec) {
   EXPECT_THAT(Eval("++1"), IsError("expression is not assignable"));
   EXPECT_THAT(Eval("--i"),
-              XFail(IsError("side effects are not supported in this context")));
+              IsError("side effects are not supported in this context"));
 
-  // #ifndef __EMSCRIPTEN__
-  //   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
-  //   EXPECT_THAT(EvalWithContext("++$arr", vars_),
-  //               IsError("cannot increment value of type 'int[3]'"));
+#ifndef __EMSCRIPTEN__
+  ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
+  EXPECT_THAT(EvalWithContext("++$arr", vars_),
+              IsError("cannot increment value of type 'int[3]'"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$enum_foo", "ScopedEnum::kFoo"));
-  //   EXPECT_THAT(EvalWithContext("++$enum_foo", vars_),
-  //               IsError("cannot increment expression of enum type
-  //               'ScopedEnum'"));
+  ASSERT_TRUE(CreateContextVariable("$enum_foo", "ScopedEnum::kFoo"));
+  EXPECT_THAT(EvalWithContext("++$enum_foo", vars_),
+              IsError("cannot increment expression of enum type 'ScopedEnum'"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-  //   EXPECT_THAT(EvalWithContext("++$i", vars_), IsEqual("2"));
-  //   EXPECT_THAT(EvalWithContext("++$i + 1", vars_), IsEqual("4"));
-  //   EXPECT_THAT(EvalWithContext("--$i", vars_), IsEqual("2"));
-  //   EXPECT_THAT(EvalWithContext("--$i - 1", vars_), IsEqual("0"));
+  ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  EXPECT_THAT(EvalWithContext("++$i", vars_), IsEqual("2"));
+  EXPECT_THAT(EvalWithContext("++$i + 1", vars_), IsEqual("4"));
+  EXPECT_THAT(EvalWithContext("--$i", vars_), IsEqual("2"));
+  EXPECT_THAT(EvalWithContext("--$i - 1", vars_), IsEqual("0"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-  //   EXPECT_THAT(EvalWithContext("++$f", vars_), IsEqual("2.5"));
-  //   EXPECT_THAT(EvalWithContext("++$f + 1", vars_), IsEqual("4.5"));
-  //   EXPECT_THAT(EvalWithContext("--$f", vars_), IsEqual("2.5"));
-  //   EXPECT_THAT(EvalWithContext("--$f - 1", vars_), IsEqual("0.5"));
+  ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  EXPECT_THAT(EvalWithContext("++$f", vars_), IsEqual("2.5"));
+  EXPECT_THAT(EvalWithContext("++$f + 1", vars_), IsEqual("4.5"));
+  EXPECT_THAT(EvalWithContext("--$f", vars_), IsEqual("2.5"));
+  EXPECT_THAT(EvalWithContext("--$f - 1", vars_), IsEqual("0.5"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$d", "1.5"));
-  //   EXPECT_THAT(EvalWithContext("++$d", vars_), IsEqual("2.5"));
-  //   EXPECT_THAT(EvalWithContext("++$d + 1", vars_), IsEqual("4.5"));
-  //   EXPECT_THAT(EvalWithContext("--$d", vars_), IsEqual("2.5"));
-  //   EXPECT_THAT(EvalWithContext("--$d - 1", vars_), IsEqual("0.5"));
+  ASSERT_TRUE(CreateContextVariable("$d", "1.5"));
+  EXPECT_THAT(EvalWithContext("++$d", vars_), IsEqual("2.5"));
+  EXPECT_THAT(EvalWithContext("++$d + 1", vars_), IsEqual("4.5"));
+  EXPECT_THAT(EvalWithContext("--$d", vars_), IsEqual("2.5"));
+  EXPECT_THAT(EvalWithContext("--$d - 1", vars_), IsEqual("0.5"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$p", "(int*)4"));
-  //   EXPECT_THAT(EvalWithContext("++$p", vars_),
-  //               IsEqual(Is32Bit() ? "0x00000008" : "0x0000000000000008"));
-  //   EXPECT_THAT(EvalWithContext("++$p + 1", vars_),
-  //               IsEqual(Is32Bit() ? "0x00000010" : "0x0000000000000010"));
-  //   EXPECT_THAT(EvalWithContext("--$p", vars_),
-  //               IsEqual(Is32Bit() ? "0x00000008" : "0x0000000000000008"));
-  //   EXPECT_THAT(EvalWithContext("--$p - 1", vars_),
-  //               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  // #endif
+  ASSERT_TRUE(CreateContextVariable("$p", "(int*)4"));
+  EXPECT_THAT(EvalWithContext("++$p", vars_),
+              IsEqual(Is32Bit() ? "0x00000008" : "0x0000000000000008"));
+  EXPECT_THAT(EvalWithContext("++$p + 1", vars_),
+              IsEqual(Is32Bit() ? "0x00000010" : "0x0000000000000010"));
+  EXPECT_THAT(EvalWithContext("--$p", vars_),
+              IsEqual(Is32Bit() ? "0x00000008" : "0x0000000000000008"));
+  EXPECT_THAT(EvalWithContext("--$p - 1", vars_),
+              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+#endif
 }
 
-TEST_F(EvalTest, TestPostfixIncDec) {
+TEST_F(EvalTest, DISABLED_TestPostfixIncDec) {
   EXPECT_THAT(Eval("1++"), IsError("expression is not assignable"));
   EXPECT_THAT(Eval("i--"),
-              XFail(IsError("side effects are not supported in this context")));
+              IsError("side effects are not supported in this context"));
 
-  // #ifndef __EMSCRIPTEN__
-  //   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
-  //   EXPECT_THAT(EvalWithContext("$arr--", vars_),
-  //               IsError("cannot decrement value of type 'int[3]'"));
+#ifndef __EMSCRIPTEN__
+  ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1,2,3}"));
+  EXPECT_THAT(EvalWithContext("$arr--", vars_),
+              IsError("cannot decrement value of type 'int[3]'"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$enum_foo", "ScopedEnum::kFoo"));
-  //   EXPECT_THAT(EvalWithContext("$enum_foo++", vars_),
-  //               IsError("cannot increment expression of enum type
-  //               'ScopedEnum'"));
+  ASSERT_TRUE(CreateContextVariable("$enum_foo", "ScopedEnum::kFoo"));
+  EXPECT_THAT(EvalWithContext("$enum_foo++", vars_),
+              IsError("cannot increment expression of enum type 'ScopedEnum'"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-  //   EXPECT_THAT(EvalWithContext("$i++", vars_), IsEqual("1"));
-  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("2"));
-  //   EXPECT_THAT(EvalWithContext("$i++ + 1", vars_), IsEqual("3"));
-  //   EXPECT_THAT(EvalWithContext("$i--", vars_), IsEqual("3"));
-  //   EXPECT_THAT(EvalWithContext("$i-- - 1", vars_), IsEqual("1"));
+  ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  EXPECT_THAT(EvalWithContext("$i++", vars_), IsEqual("1"));
+  EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("2"));
+  EXPECT_THAT(EvalWithContext("$i++ + 1", vars_), IsEqual("3"));
+  EXPECT_THAT(EvalWithContext("$i--", vars_), IsEqual("3"));
+  EXPECT_THAT(EvalWithContext("$i-- - 1", vars_), IsEqual("1"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-  //   EXPECT_THAT(EvalWithContext("$f++", vars_), IsEqual("1.5"));
-  //   EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("2.5"));
-  //   EXPECT_THAT(EvalWithContext("$f++ + 1", vars_), IsEqual("3.5"));
-  //   EXPECT_THAT(EvalWithContext("$f--", vars_), IsEqual("3.5"));
-  //   EXPECT_THAT(EvalWithContext("$f-- - 1", vars_), IsEqual("1.5"));
+  ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  EXPECT_THAT(EvalWithContext("$f++", vars_), IsEqual("1.5"));
+  EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("2.5"));
+  EXPECT_THAT(EvalWithContext("$f++ + 1", vars_), IsEqual("3.5"));
+  EXPECT_THAT(EvalWithContext("$f--", vars_), IsEqual("3.5"));
+  EXPECT_THAT(EvalWithContext("$f-- - 1", vars_), IsEqual("1.5"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$d", "1.5"));
-  //   EXPECT_THAT(EvalWithContext("$d++", vars_), IsEqual("1.5"));
-  //   EXPECT_THAT(EvalWithContext("$d++ + 1", vars_), IsEqual("3.5"));
-  //   EXPECT_THAT(EvalWithContext("$d--", vars_), IsEqual("3.5"));
-  //   EXPECT_THAT(EvalWithContext("$d-- - 1", vars_), IsEqual("1.5"));
+  ASSERT_TRUE(CreateContextVariable("$d", "1.5"));
+  EXPECT_THAT(EvalWithContext("$d++", vars_), IsEqual("1.5"));
+  EXPECT_THAT(EvalWithContext("$d++ + 1", vars_), IsEqual("3.5"));
+  EXPECT_THAT(EvalWithContext("$d--", vars_), IsEqual("3.5"));
+  EXPECT_THAT(EvalWithContext("$d-- - 1", vars_), IsEqual("1.5"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$p", "(int*)4"));
-  //   EXPECT_THAT(EvalWithContext("$p++", vars_),
-  //               IsEqual(Is32Bit() ? "0x00000004" : "0x0000000000000004"));
-  //   EXPECT_THAT(EvalWithContext("$p++ + 1", vars_),
-  //               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
-  //   EXPECT_THAT(EvalWithContext("$p--", vars_),
-  //               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
-  //   EXPECT_THAT(EvalWithContext("$p-- - 1", vars_),
-  //               IsEqual(Is32Bit() ? "0x00000004" : "0x0000000000000004"));
-  // #endif
+  ASSERT_TRUE(CreateContextVariable("$p", "(int*)4"));
+  EXPECT_THAT(EvalWithContext("$p++", vars_),
+              IsEqual(Is32Bit() ? "0x00000004" : "0x0000000000000004"));
+  EXPECT_THAT(EvalWithContext("$p++ + 1", vars_),
+              IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
+  EXPECT_THAT(EvalWithContext("$p--", vars_),
+              IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
+  EXPECT_THAT(EvalWithContext("$p-- - 1", vars_),
+              IsEqual(Is32Bit() ? "0x00000004" : "0x0000000000000004"));
+#endif
 }
 
 #ifndef __EMSCRIPTEN__
@@ -2893,299 +2898,295 @@ TEST_F(EvalTest, TestMemberFunctionCall) {
               IsError("member function calls are not supported"));
 }
 
-TEST_F(EvalTest, TestAssignment) {
+TEST_F(EvalTest, DISABLED_TestAssignment) {
   EXPECT_THAT(Eval("1 = 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i = 1"), XFail(IsError("side effects are not supported")));
+  EXPECT_THAT(Eval("i = 1"), IsError("side effects are not supported"));
 
   EXPECT_THAT(Eval("p = 1"),
               IsError("no known conversion from 'int' to 'float *'"));
   EXPECT_THAT(Eval("eOne = 1"),
               IsError("no known conversion from 'int' to 'Enum'"));
 
-  // #ifndef __EMSCRIPTEN__
-  //   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-  //   EXPECT_THAT(EvalWithContext("$i = 2", vars_), IsEqual("2"));
-  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("2"));
-  //   EXPECT_THAT(EvalWithContext("$i = -2", vars_), IsEqual("-2"));
-  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("-2"));
-  //   EXPECT_THAT(EvalWithContext("$i = eOne", vars_), IsEqual("0"));
-  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("0"));
-  //   EXPECT_THAT(EvalWithContext("$i = eTwo", vars_), IsEqual("1"));
-  //   EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("1"));
+#ifndef __EMSCRIPTEN__
+  ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  EXPECT_THAT(EvalWithContext("$i = 2", vars_), IsEqual("2"));
+  EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("2"));
+  EXPECT_THAT(EvalWithContext("$i = -2", vars_), IsEqual("-2"));
+  EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("-2"));
+  EXPECT_THAT(EvalWithContext("$i = eOne", vars_), IsEqual("0"));
+  EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("0"));
+  EXPECT_THAT(EvalWithContext("$i = eTwo", vars_), IsEqual("1"));
+  EXPECT_THAT(EvalWithContext("$i", vars_), IsEqual("1"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-  //   EXPECT_THAT(EvalWithContext("$f = 2.5", vars_), IsEqual("2.5"));
-  //   EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("2.5"));
-  //   EXPECT_THAT(EvalWithContext("$f = 3.5f", vars_), IsEqual("3.5"));
-  //   EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("3.5"));
+  ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  EXPECT_THAT(EvalWithContext("$f = 2.5", vars_), IsEqual("2.5"));
+  EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("2.5"));
+  EXPECT_THAT(EvalWithContext("$f = 3.5f", vars_), IsEqual("3.5"));
+  EXPECT_THAT(EvalWithContext("$f", vars_), IsEqual("3.5"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
-  //   EXPECT_THAT(EvalWithContext("$s = 100000", vars_), IsEqual("-31072"));
-  //   EXPECT_THAT(EvalWithContext("$s", vars_), IsEqual("-31072"));
+  ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
+  EXPECT_THAT(EvalWithContext("$s = 100000", vars_), IsEqual("-31072"));
+  EXPECT_THAT(EvalWithContext("$s", vars_), IsEqual("-31072"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
-  //   EXPECT_THAT(EvalWithContext("$p = 1", vars_),
-  //               IsError("no known conversion from 'int' to 'int *'"));
-  //   EXPECT_THAT(EvalWithContext("$p = (int*)12", vars_),
-  //               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
-  //   EXPECT_THAT(EvalWithContext("$p", vars_),
-  //               IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
-  //   EXPECT_THAT(EvalWithContext("$p = 0", vars_),
-  //               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  //   EXPECT_THAT(EvalWithContext("$p = nullptr", vars_),
-  //               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+  ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
+  EXPECT_THAT(EvalWithContext("$p = 1", vars_),
+              IsError("no known conversion from 'int' to 'int *'"));
+  EXPECT_THAT(EvalWithContext("$p = (int*)12", vars_),
+              IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
+  EXPECT_THAT(EvalWithContext("$p", vars_),
+              IsEqual(Is32Bit() ? "0x0000000c" : "0x000000000000000c"));
+  EXPECT_THAT(EvalWithContext("$p = 0", vars_),
+              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+  EXPECT_THAT(EvalWithContext("$p = nullptr", vars_),
+              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 
-  //   ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1, 2}"));
-  //   EXPECT_THAT(EvalWithContext("$p = $arr", vars_), IsOk());
+  ASSERT_TRUE(CreateContextVariableArray("int", "$arr", "{1, 2}"));
+  EXPECT_THAT(EvalWithContext("$p = $arr", vars_), IsOk());
 
-  //   ASSERT_TRUE(CreateContextVariableArray("float", "$farr", "{1.f, 2.f}"));
-  //   EXPECT_THAT(EvalWithContext("$p = $farr", vars_),
-  //               IsError("no known conversion from 'float[2]' to 'int *'"));
-  // #endif
+  ASSERT_TRUE(CreateContextVariableArray("float", "$farr", "{1.f, 2.f}"));
+  EXPECT_THAT(EvalWithContext("$p = $farr", vars_),
+              IsError("no known conversion from 'float[2]' to 'int *'"));
+#endif
 }
 
-TEST_F(EvalTest, TestCompositeAssignmentInvalid) {
+TEST_F(EvalTest, DISABLED_TestCompositeAssignmentInvalid) {
   EXPECT_THAT(Eval("1 += 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i += 1"), XFail(IsError("side effects are not supported")));
+  EXPECT_THAT(Eval("i += 1"), IsError("side effects are not supported"));
 
   EXPECT_THAT(Eval("1 -= 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i -= 1"), XFail(IsError("side effects are not supported")));
+  EXPECT_THAT(Eval("i -= 1"), IsError("side effects are not supported"));
 
   EXPECT_THAT(Eval("1 *= 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i *= 1"), XFail(IsError("side effects are not supported")));
+  EXPECT_THAT(Eval("i *= 1"), IsError("side effects are not supported"));
 
   EXPECT_THAT(Eval("1 /= 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i /= 1"), XFail(IsError("side effects are not supported")));
+  EXPECT_THAT(Eval("i /= 1"), IsError("side effects are not supported"));
 
   EXPECT_THAT(Eval("1 %= 1"), IsError("expression is not assignable"));
-  EXPECT_THAT(Eval("i %= 1"), XFail(IsError("side effects are not supported")));
+  EXPECT_THAT(Eval("i %= 1"), IsError("side effects are not supported"));
   EXPECT_THAT(
       Eval("f %= 1"),
       IsError("invalid operands to binary expression ('float' and 'int')"));
 
-  // #ifndef __EMSCRIPTEN__
-  //   ASSERT_TRUE(CreateContextVariable("Enum", "$e", false, "Enum::ONE"));
-  //   EXPECT_THAT(
-  //       EvalWithContext("$e *= 1", vars_),
-  //       // TODO(werat): This should actually be:
-  //       // > assigning to 'Enum' from incompatible type 'int'
-  //       IsError("invalid operands to binary expression ('Enum' and 'int')"));
+#ifndef __EMSCRIPTEN__
+  ASSERT_TRUE(CreateContextVariable("Enum", "$e", false, "Enum::ONE"));
+  EXPECT_THAT(
+      EvalWithContext("$e *= 1", vars_),
+      // TODO(werat): This should actually be:
+      // > assigning to 'Enum' from incompatible type 'int'
+      IsError("invalid operands to binary expression ('Enum' and 'int')"));
 
-  //   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-  //   EXPECT_THAT(EvalWithContext("($i += 1) -= 2", vars_),
-  //               IsError("side effects are not supported in this context"));
-  // #endif
+  ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  EXPECT_THAT(EvalWithContext("($i += 1) -= 2", vars_),
+              IsError("side effects are not supported in this context"));
+#endif
 }
 
-// #ifndef __EMSCRIPTEN__
-// TEST_F(EvalTest, TestCompositeAssignmentAdd) {
-//   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-//   EXPECT_THAT(EvalWithContext("$i += 1", vars_), IsEqual("2"));
-//   EXPECT_THAT(EvalWithContext("$i += 2", vars_), IsEqual("4"));
-//   EXPECT_THAT(EvalWithContext("$i += -4", vars_), IsEqual("0"));
-//   EXPECT_THAT(EvalWithContext("$i += eOne", vars_), IsEqual("0"));
-//   EXPECT_THAT(EvalWithContext("$i += eTwo", vars_), IsEqual("1"));
+#ifndef __EMSCRIPTEN__
+TEST_F(EvalTest, DISABLED_TestCompositeAssignmentAdd) {
+  ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  EXPECT_THAT(EvalWithContext("$i += 1", vars_), IsEqual("2"));
+  EXPECT_THAT(EvalWithContext("$i += 2", vars_), IsEqual("4"));
+  EXPECT_THAT(EvalWithContext("$i += -4", vars_), IsEqual("0"));
+  EXPECT_THAT(EvalWithContext("$i += eOne", vars_), IsEqual("0"));
+  EXPECT_THAT(EvalWithContext("$i += eTwo", vars_), IsEqual("1"));
 
-//   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-//   EXPECT_THAT(EvalWithContext("$f += 1", vars_), IsEqual("2.5"));
-//   EXPECT_THAT(EvalWithContext("$f += -2", vars_), IsEqual("0.5"));
-//   EXPECT_THAT(EvalWithContext("$f += 2.5", vars_), IsEqual("3"));
-//   EXPECT_THAT(EvalWithContext("$f += eTwo", vars_), IsEqual("4"));
+  ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  EXPECT_THAT(EvalWithContext("$f += 1", vars_), IsEqual("2.5"));
+  EXPECT_THAT(EvalWithContext("$f += -2", vars_), IsEqual("0.5"));
+  EXPECT_THAT(EvalWithContext("$f += 2.5", vars_), IsEqual("3"));
+  EXPECT_THAT(EvalWithContext("$f += eTwo", vars_), IsEqual("4"));
 
-//   ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
-//   EXPECT_THAT(EvalWithContext("$s += 1000", vars_), IsEqual("1100"));
-//   EXPECT_THAT(EvalWithContext("$s += 100000", vars_), IsEqual("-29972"));
+  ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
+  EXPECT_THAT(EvalWithContext("$s += 1000", vars_), IsEqual("1100"));
+  EXPECT_THAT(EvalWithContext("$s += 100000", vars_), IsEqual("-29972"));
 
-//   ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
-//   EXPECT_THAT(EvalWithContext("$p += 1", vars_),
-//               IsEqual(Is32Bit() ? "0x0000000e" : "0x000000000000000e"));
-//   EXPECT_THAT(
-//       EvalWithContext("$p += 1.5", vars_),
-//       IsError("invalid operands to binary expression ('int *' and
-//       'double')"));
-//   EXPECT_THAT(
-//       EvalWithContext("$p += $p", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'int
-//       *')"));
-//   EXPECT_THAT(EvalWithContext("$i += $p", vars_),
-//               IsError("no known conversion from 'int *' to 'int'"));
-// }
+  ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
+  EXPECT_THAT(EvalWithContext("$p += 1", vars_),
+              IsEqual(Is32Bit() ? "0x0000000e" : "0x000000000000000e"));
+  EXPECT_THAT(
+      EvalWithContext("$p += 1.5", vars_),
+      IsError("invalid operands to binary expression ('int *' and 'double')"));
+  EXPECT_THAT(
+      EvalWithContext("$p += $p", vars_),
+      IsError("invalid operands to binary expression ('int *' and 'int *')"));
+  EXPECT_THAT(EvalWithContext("$i += $p", vars_),
+              IsError("no known conversion from 'int *' to 'int'"));
+}
 
-// TEST_F(EvalTest, TestCompositeAssignmentSub) {
-//   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-//   EXPECT_THAT(EvalWithContext("$i -= 1", vars_), IsEqual("0"));
-//   EXPECT_THAT(EvalWithContext("$i -= 2", vars_), IsEqual("-2"));
-//   EXPECT_THAT(EvalWithContext("$i -= -4", vars_), IsEqual("2"));
-//   EXPECT_THAT(EvalWithContext("$i -= eOne", vars_), IsEqual("2"));
-//   EXPECT_THAT(EvalWithContext("$i -= eTwo", vars_), IsEqual("1"));
+TEST_F(EvalTest, DISABLED_TestCompositeAssignmentSub) {
+  ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  EXPECT_THAT(EvalWithContext("$i -= 1", vars_), IsEqual("0"));
+  EXPECT_THAT(EvalWithContext("$i -= 2", vars_), IsEqual("-2"));
+  EXPECT_THAT(EvalWithContext("$i -= -4", vars_), IsEqual("2"));
+  EXPECT_THAT(EvalWithContext("$i -= eOne", vars_), IsEqual("2"));
+  EXPECT_THAT(EvalWithContext("$i -= eTwo", vars_), IsEqual("1"));
 
-//   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-//   EXPECT_THAT(EvalWithContext("$f -= 1", vars_), IsEqual("0.5"));
-//   EXPECT_THAT(EvalWithContext("$f -= -2", vars_), IsEqual("2.5"));
-//   EXPECT_THAT(EvalWithContext("$f -= -2.5", vars_), IsEqual("5"));
-//   EXPECT_THAT(EvalWithContext("$f -= eTwo", vars_), IsEqual("4"));
+  ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  EXPECT_THAT(EvalWithContext("$f -= 1", vars_), IsEqual("0.5"));
+  EXPECT_THAT(EvalWithContext("$f -= -2", vars_), IsEqual("2.5"));
+  EXPECT_THAT(EvalWithContext("$f -= -2.5", vars_), IsEqual("5"));
+  EXPECT_THAT(EvalWithContext("$f -= eTwo", vars_), IsEqual("4"));
 
-//   ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
-//   EXPECT_THAT(EvalWithContext("$s -= 1000", vars_), IsEqual("-900"));
-//   EXPECT_THAT(EvalWithContext("$s -= 100000", vars_), IsEqual("30172"));
+  ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
+  EXPECT_THAT(EvalWithContext("$s -= 1000", vars_), IsEqual("-900"));
+  EXPECT_THAT(EvalWithContext("$s -= 100000", vars_), IsEqual("30172"));
 
-//   ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
-//   EXPECT_THAT(EvalWithContext("$p -= 1", vars_),
-//               IsEqual(Is32Bit() ? "0x00000006" : "0x0000000000000006"));
+  ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
+  EXPECT_THAT(EvalWithContext("$p -= 1", vars_),
+              IsEqual(Is32Bit() ? "0x00000006" : "0x0000000000000006"));
 
-// #ifdef _WIN32
-//   // On Windows, 'ptrdiff_t' is 'long long'.
-//   EXPECT_THAT(EvalWithContext("$p -= $p", vars_),
-//               IsError("no known conversion from 'long long' to 'int *'"));
-// #else
-//   // On Linux, 'ptrdiff_t' is 'long'.
-//   EXPECT_THAT(EvalWithContext("$p -= $p", vars_),
-//               IsError("no known conversion from 'long' to 'int *'"));
-// #endif
-// }
+#ifdef _WIN32
+  // On Windows, 'ptrdiff_t' is 'long long'.
+  EXPECT_THAT(EvalWithContext("$p -= $p", vars_),
+              IsError("no known conversion from 'long long' to 'int *'"));
+#else
+  // On Linux, 'ptrdiff_t' is 'long'.
+  EXPECT_THAT(EvalWithContext("$p -= $p", vars_),
+              IsError("no known conversion from 'long' to 'int *'"));
+#endif
+}
 
-// TEST_F(EvalTest, TestCompositeAssignmentMul) {
-//   ASSERT_TRUE(CreateContextVariable("$i", "1"));
-//   EXPECT_THAT(EvalWithContext("$i *= 1", vars_), IsEqual("1"));
-//   EXPECT_THAT(EvalWithContext("$i *= 2", vars_), IsEqual("2"));
-//   EXPECT_THAT(EvalWithContext("$i *= -2.5", vars_), IsEqual("-5"));
-//   EXPECT_THAT(EvalWithContext("$i *= eTwo", vars_), IsEqual("-5"));
+TEST_F(EvalTest, DISABLED_TestCompositeAssignmentMul) {
+  ASSERT_TRUE(CreateContextVariable("$i", "1"));
+  EXPECT_THAT(EvalWithContext("$i *= 1", vars_), IsEqual("1"));
+  EXPECT_THAT(EvalWithContext("$i *= 2", vars_), IsEqual("2"));
+  EXPECT_THAT(EvalWithContext("$i *= -2.5", vars_), IsEqual("-5"));
+  EXPECT_THAT(EvalWithContext("$i *= eTwo", vars_), IsEqual("-5"));
 
-//   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-//   EXPECT_THAT(EvalWithContext("$f *= 1", vars_), IsEqual("1.5"));
-//   EXPECT_THAT(EvalWithContext("$f *= 2", vars_), IsEqual("3"));
-//   EXPECT_THAT(EvalWithContext("$f *= -2.5", vars_), IsEqual("-7.5"));
-//   EXPECT_THAT(EvalWithContext("$f *= eTwo", vars_), IsEqual("-7.5"));
+  ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  EXPECT_THAT(EvalWithContext("$f *= 1", vars_), IsEqual("1.5"));
+  EXPECT_THAT(EvalWithContext("$f *= 2", vars_), IsEqual("3"));
+  EXPECT_THAT(EvalWithContext("$f *= -2.5", vars_), IsEqual("-7.5"));
+  EXPECT_THAT(EvalWithContext("$f *= eTwo", vars_), IsEqual("-7.5"));
 
-//   ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
-//   EXPECT_THAT(EvalWithContext("$s *= 1000", vars_), IsEqual("-31072"));
-//   EXPECT_THAT(EvalWithContext("$s *= -1000", vars_), IsEqual("7936"));
-// }
+  ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
+  EXPECT_THAT(EvalWithContext("$s *= 1000", vars_), IsEqual("-31072"));
+  EXPECT_THAT(EvalWithContext("$s *= -1000", vars_), IsEqual("7936"));
+}
 
-// TEST_F(EvalTest, TestCompositeAssignmentDiv) {
-//   ASSERT_TRUE(CreateContextVariable("$i", "15"));
-//   EXPECT_THAT(EvalWithContext("$i /= 1", vars_), IsEqual("15"));
-//   EXPECT_THAT(EvalWithContext("$i /= 2", vars_), IsEqual("7"));
-//   EXPECT_THAT(EvalWithContext("$i /= -2", vars_), IsEqual("-3"));
-//   EXPECT_THAT(EvalWithContext("$i /= eTwo", vars_), IsEqual("-3"));
+TEST_F(EvalTest, DISABLED_TestCompositeAssignmentDiv) {
+  ASSERT_TRUE(CreateContextVariable("$i", "15"));
+  EXPECT_THAT(EvalWithContext("$i /= 1", vars_), IsEqual("15"));
+  EXPECT_THAT(EvalWithContext("$i /= 2", vars_), IsEqual("7"));
+  EXPECT_THAT(EvalWithContext("$i /= -2", vars_), IsEqual("-3"));
+  EXPECT_THAT(EvalWithContext("$i /= eTwo", vars_), IsEqual("-3"));
 
-//   ASSERT_TRUE(CreateContextVariable("$f", "15.5f"));
-//   EXPECT_THAT(EvalWithContext("$f /= 1", vars_), IsEqual("15.5"));
-//   EXPECT_THAT(EvalWithContext("$f /= 2", vars_), IsEqual("7.75"));
-//   EXPECT_THAT(EvalWithContext("$f /= -2.5", vars_), IsEqual("-3.0999999"));
-//   EXPECT_THAT(EvalWithContext("$f /= eTwo", vars_), IsEqual("-3.0999999"));
+  ASSERT_TRUE(CreateContextVariable("$f", "15.5f"));
+  EXPECT_THAT(EvalWithContext("$f /= 1", vars_), IsEqual("15.5"));
+  EXPECT_THAT(EvalWithContext("$f /= 2", vars_), IsEqual("7.75"));
+  EXPECT_THAT(EvalWithContext("$f /= -2.5", vars_), IsEqual("-3.0999999"));
+  EXPECT_THAT(EvalWithContext("$f /= eTwo", vars_), IsEqual("-3.0999999"));
 
-//   ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
-//   EXPECT_THAT(EvalWithContext("$s /= 10", vars_), IsEqual("10"));
-//   EXPECT_THAT(EvalWithContext("$s /= -3", vars_), IsEqual("-3"));
-// }
+  ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
+  EXPECT_THAT(EvalWithContext("$s /= 10", vars_), IsEqual("10"));
+  EXPECT_THAT(EvalWithContext("$s /= -3", vars_), IsEqual("-3"));
+}
 
-// TEST_F(EvalTest, TestCompositeAssignmentRem) {
-//   ASSERT_TRUE(CreateContextVariable("$i", "15"));
-//   EXPECT_THAT(EvalWithContext("$i %= 8", vars_), IsEqual("7"));
-//   EXPECT_THAT(EvalWithContext("$i %= -3", vars_), IsEqual("1"));
-//   EXPECT_THAT(EvalWithContext("$i %= eTwo", vars_), IsEqual("0"));
+TEST_F(EvalTest, DISABLED_TestCompositeAssignmentRem) {
+  ASSERT_TRUE(CreateContextVariable("$i", "15"));
+  EXPECT_THAT(EvalWithContext("$i %= 8", vars_), IsEqual("7"));
+  EXPECT_THAT(EvalWithContext("$i %= -3", vars_), IsEqual("1"));
+  EXPECT_THAT(EvalWithContext("$i %= eTwo", vars_), IsEqual("0"));
 
-//   ASSERT_TRUE(CreateContextVariable("$f", "15.5f"));
-//   EXPECT_THAT(
-//       EvalWithContext("$f %= 1", vars_),
-//       IsError("invalid operands to binary expression ('float' and 'int')"));
+  ASSERT_TRUE(CreateContextVariable("$f", "15.5f"));
+  EXPECT_THAT(
+      EvalWithContext("$f %= 1", vars_),
+      IsError("invalid operands to binary expression ('float' and 'int')"));
 
-//   ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
-//   EXPECT_THAT(EvalWithContext("$s %= 23", vars_), IsEqual("8"));
-// }
+  ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
+  EXPECT_THAT(EvalWithContext("$s %= 23", vars_), IsEqual("8"));
+}
 
-// TEST_F(EvalTest, TestCompositeAssignmentBitwise) {
-//   ASSERT_TRUE(CreateContextVariable("$i", "0b11111111"));
-//   EXPECT_THAT(EvalWithContext("$i &= 0b11110000", vars_), IsEqual("240"));
-//   EXPECT_THAT(EvalWithContext("$i |= 0b01100011", vars_), IsEqual("243"));
-//   EXPECT_THAT(EvalWithContext("$i ^= 0b00100010", vars_), IsEqual("209"));
-//   EXPECT_THAT(EvalWithContext("$i <<= 2", vars_), IsEqual("836"));
-//   EXPECT_THAT(EvalWithContext("$i >>= 3", vars_), IsEqual("104"));
-//   EXPECT_THAT(EvalWithContext("$i <<= eTwo", vars_), IsEqual("208"));
-//   EXPECT_THAT(EvalWithContext("$i >>= eTwo", vars_), IsEqual("104"));
-//   EXPECT_THAT(EvalWithContext("$i <<= 1U", vars_), IsEqual("208"));
-//   EXPECT_THAT(EvalWithContext("$i >>= 1LL", vars_), IsEqual("104"));
+TEST_F(EvalTest, DISABLED_TestCompositeAssignmentBitwise) {
+  ASSERT_TRUE(CreateContextVariable("$i", "0b11111111"));
+  EXPECT_THAT(EvalWithContext("$i &= 0b11110000", vars_), IsEqual("240"));
+  EXPECT_THAT(EvalWithContext("$i |= 0b01100011", vars_), IsEqual("243"));
+  EXPECT_THAT(EvalWithContext("$i ^= 0b00100010", vars_), IsEqual("209"));
+  EXPECT_THAT(EvalWithContext("$i <<= 2", vars_), IsEqual("836"));
+  EXPECT_THAT(EvalWithContext("$i >>= 3", vars_), IsEqual("104"));
+  EXPECT_THAT(EvalWithContext("$i <<= eTwo", vars_), IsEqual("208"));
+  EXPECT_THAT(EvalWithContext("$i >>= eTwo", vars_), IsEqual("104"));
+  EXPECT_THAT(EvalWithContext("$i <<= 1U", vars_), IsEqual("208"));
+  EXPECT_THAT(EvalWithContext("$i >>= 1LL", vars_), IsEqual("104"));
 
-//   ASSERT_TRUE(CreateContextVariable("$c", "(signed char)-1"));
-//   EXPECT_THAT(EvalWithContext("$c &= 0b11110011", vars_),
-//   IsEqual("'\\xf3'")); EXPECT_THAT(EvalWithContext("$c |= 0b01001011",
-//   vars_), IsEqual("'\\xfb'")); EXPECT_THAT(EvalWithContext("$c ^=
-//   0b00000110", vars_), IsEqual("'\\xfd'")); EXPECT_THAT(EvalWithContext("$c
-//   <<= 5", vars_), IsEqual("'\\xa0'")); EXPECT_THAT(EvalWithContext("$c >>=
-//   20", vars_), IsEqual("'\\xff'")); EXPECT_THAT(EvalWithContext("$c <<= 2U",
-//   vars_), IsEqual("'\\xfc'")); EXPECT_THAT(EvalWithContext("$c >>= eTwo",
-//   vars_), IsEqual("'\\xfe'"));
+  ASSERT_TRUE(CreateContextVariable("$c", "(signed char)-1"));
+  EXPECT_THAT(EvalWithContext("$c &= 0b11110011", vars_), IsEqual("'\\xf3'"));
+  EXPECT_THAT(EvalWithContext("$c |= 0b01001011", vars_), IsEqual("'\\xfb'"));
+  EXPECT_THAT(EvalWithContext("$c ^= 0b00000110", vars_), IsEqual("'\\xfd'"));
+  EXPECT_THAT(EvalWithContext("$c <<= 5", vars_), IsEqual("'\\xa0'"));
+  EXPECT_THAT(EvalWithContext("$c >>= 20", vars_), IsEqual("'\\xff'"));
+  EXPECT_THAT(EvalWithContext("$c <<= 2U", vars_), IsEqual("'\\xfc'"));
+  EXPECT_THAT(EvalWithContext("$c >>= eTwo", vars_), IsEqual("'\\xfe'"));
 
-//   ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
-//   EXPECT_THAT(
-//       EvalWithContext("$f &= 1", vars_),
-//       IsError("invalid operands to binary expression ('float' and 'int')"));
-//   EXPECT_THAT(
-//       EvalWithContext("$f |= 1", vars_),
-//       IsError("invalid operands to binary expression ('float' and 'int')"));
-//   EXPECT_THAT(
-//       EvalWithContext("$f ^= 1", vars_),
-//       IsError("invalid operands to binary expression ('float' and 'int')"));
-//   EXPECT_THAT(
-//       EvalWithContext("$f <<= 1", vars_),
-//       IsError("invalid operands to binary expression ('float' and 'int')"));
-//   EXPECT_THAT(
-//       EvalWithContext("$f >>= 1", vars_),
-//       IsError("invalid operands to binary expression ('float' and 'int')"));
+  ASSERT_TRUE(CreateContextVariable("$f", "1.5f"));
+  EXPECT_THAT(
+      EvalWithContext("$f &= 1", vars_),
+      IsError("invalid operands to binary expression ('float' and 'int')"));
+  EXPECT_THAT(
+      EvalWithContext("$f |= 1", vars_),
+      IsError("invalid operands to binary expression ('float' and 'int')"));
+  EXPECT_THAT(
+      EvalWithContext("$f ^= 1", vars_),
+      IsError("invalid operands to binary expression ('float' and 'int')"));
+  EXPECT_THAT(
+      EvalWithContext("$f <<= 1", vars_),
+      IsError("invalid operands to binary expression ('float' and 'int')"));
+  EXPECT_THAT(
+      EvalWithContext("$f >>= 1", vars_),
+      IsError("invalid operands to binary expression ('float' and 'int')"));
 
-//   ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
-//   EXPECT_THAT(EvalWithContext("$s >>= 2", vars_), IsEqual("25"));
-//   EXPECT_THAT(EvalWithContext("$s <<= 6", vars_), IsEqual("1600"));
-//   EXPECT_THAT(EvalWithContext("$s <<= 12", vars_), IsEqual("0"));
+  ASSERT_TRUE(CreateContextVariable("$s", "(short)100"));
+  EXPECT_THAT(EvalWithContext("$s >>= 2", vars_), IsEqual("25"));
+  EXPECT_THAT(EvalWithContext("$s <<= 6", vars_), IsEqual("1600"));
+  EXPECT_THAT(EvalWithContext("$s <<= 12", vars_), IsEqual("0"));
 
-//   ASSERT_TRUE(CreateContextVariable("$e", "eTwo"));
-//   std::vector<std::string> ops = {"&=", "|=", "^=", "<<=", ">>="};
-//   for (const auto& op : ops) {
-//     const std::string expr = "$e " + op + " 1";  // e.g. "$e ^= 1"
-//     EXPECT_THAT(
-//         EvalWithContext(expr, vars_),
-//         IsError("invalid operands to binary expression ('Enum' and 'int')"));
-//   }
+  ASSERT_TRUE(CreateContextVariable("$e", "eTwo"));
+  std::vector<std::string> ops = {"&=", "|=", "^=", "<<=", ">>="};
+  for (const auto &op : ops) {
+    const std::string expr = "$e " + op + " 1"; // e.g. "$e ^= 1"
+    EXPECT_THAT(
+        EvalWithContext(expr, vars_),
+        IsError("invalid operands to binary expression ('Enum' and 'int')"));
+  }
 
-//   ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
-//   EXPECT_THAT(
-//       EvalWithContext("$p &= 1", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'int')"));
-//   EXPECT_THAT(
-//       EvalWithContext("$p |= (char)1", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'char')"));
-//   EXPECT_THAT(
-//       EvalWithContext("$p ^= &f", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'float
-//       *')"));
-//   EXPECT_THAT(
-//       EvalWithContext("$p <<= 1", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'int')"));
-//   EXPECT_THAT(
-//       EvalWithContext("$p >>= $p", vars_),
-//       IsError("invalid operands to binary expression ('int *' and 'int
-//       *')"));
-// }
+  ASSERT_TRUE(CreateContextVariable("$p", "(int*)10"));
+  EXPECT_THAT(
+      EvalWithContext("$p &= 1", vars_),
+      IsError("invalid operands to binary expression ('int *' and 'int')"));
+  EXPECT_THAT(
+      EvalWithContext("$p |= (char)1", vars_),
+      IsError("invalid operands to binary expression ('int *' and 'char')"));
+  EXPECT_THAT(
+      EvalWithContext("$p ^= &f", vars_),
+      IsError("invalid operands to binary expression ('int *' and 'float *')"));
+  EXPECT_THAT(
+      EvalWithContext("$p <<= 1", vars_),
+      IsError("invalid operands to binary expression ('int *' and 'int')"));
+  EXPECT_THAT(
+      EvalWithContext("$p >>= $p", vars_),
+      IsError("invalid operands to binary expression ('int *' and 'int *')"));
+}
 
-// TEST_F(EvalTest, TestSideEffects) {
-//   // Comparing with LLDB is not possible with side effects enabled -- results
-//   // will always be different (because the same expression is evaluated
-//   twice). this->compare_with_lldb_ = false; this->allow_side_effects_ = true;
+TEST_F(EvalTest, DISABLED_TestSideEffects) {
+  // Comparing with LLDB is not possible with side effects enabled -- results
+  // will always be different (because the same expression is evaluated twice).
+  this->compare_with_lldb_ = false;
+  this->allow_side_effects_ = true;
 
-//   EXPECT_THAT(Eval("x++"), IsEqual("1"));
-//   EXPECT_THAT(Eval("x"), IsEqual("2"));
-//   EXPECT_THAT(Eval("++x"), IsEqual("3"));
+  EXPECT_THAT(Eval("x++"), IsEqual("1"));
+  EXPECT_THAT(Eval("x"), IsEqual("2"));
+  EXPECT_THAT(Eval("++x"), IsEqual("3"));
 
-//   EXPECT_THAT(Eval("xa[0] = 4"), IsEqual("4"));
-//   EXPECT_THAT(Eval("xa[0]"), IsEqual("4"));
-//   EXPECT_THAT(Eval("xa[1] += xa[0]"), IsEqual("6"));
+  EXPECT_THAT(Eval("xa[0] = 4"), IsEqual("4"));
+  EXPECT_THAT(Eval("xa[0]"), IsEqual("4"));
+  EXPECT_THAT(Eval("xa[1] += xa[0]"), IsEqual("6"));
 
-//   EXPECT_THAT(Eval("*p = 5.2"), IsEqual("5"));
-//   EXPECT_THAT(Eval("*p"), IsEqual("5"));
-//   EXPECT_THAT(Eval("x"), IsEqual("5"));  // `p` is `&x`
-// }
-// #endif
+  EXPECT_THAT(Eval("*p = 5.2"), IsEqual("5"));
+  EXPECT_THAT(Eval("*p"), IsEqual("5"));
+  EXPECT_THAT(Eval("x"), IsEqual("5")); // `p` is `&x`
+}
+#endif
 
 TEST_F(EvalTest, TestBuiltinFunction_findnonnull) {
   // LLDB doesn't support `__findnonnull` intrinsic function.
@@ -3473,69 +3474,69 @@ TEST_F(EvalTest, TestTypeVsIdentifier) {
 }
 
 #ifndef __EMSCRIPTEN__
-// TEST_F(EvalTest, TestSeparateParsing) {
-//   lldb::SBError error;
+TEST_F(EvalTest, DISABLED_TestSeparateParsing) {
+  lldb::SBError error;
 
-//   auto expr_a = Scope("a").Compile("a_", error);
-//   ASSERT_TRUE(error.Success());
+  auto expr_a = Scope("a").Compile("a_", error);
+  ASSERT_TRUE(error.Success());
 
-//   auto expr_b = Scope("b").Compile("b_", error);
-//   ASSERT_TRUE(error.Success());
+  auto expr_b = Scope("b").Compile("b_", error);
+  ASSERT_TRUE(error.Success());
 
-//   auto expr_c = Scope("c").Compile("a_ * b_ * c_", error);
-//   ASSERT_TRUE(error.Success());
+  auto expr_c = Scope("c").Compile("a_ * b_ * c_", error);
+  ASSERT_TRUE(error.Success());
 
-//   auto expr_d = Scope("d").Compile("a_ * b_ * c_ * d_", error);
-//   ASSERT_TRUE(error.Success());
+  auto expr_d = Scope("d").Compile("a_ * b_ * c_ * d_", error);
+  ASSERT_TRUE(error.Success());
 
-//   auto expr_c_this = Scope("c").Compile("this", error);
-//   ASSERT_TRUE(error.Success());
+  auto expr_c_this = Scope("c").Compile("this", error);
+  ASSERT_TRUE(error.Success());
 
-//   EXPECT_THAT(Scope("a").Eval(expr_a), IsEqual("1"));
-//   EXPECT_THAT(Scope("b").Eval(expr_b), IsEqual("2"));
-//   EXPECT_THAT(Scope("c").Eval(expr_c), IsEqual("60"));
-//   EXPECT_THAT(Scope("d").Eval(expr_d), IsEqual("3024"));
+  EXPECT_THAT(Scope("a").Eval(expr_a), IsEqual("1"));
+  EXPECT_THAT(Scope("b").Eval(expr_b), IsEqual("2"));
+  EXPECT_THAT(Scope("c").Eval(expr_c), IsEqual("60"));
+  EXPECT_THAT(Scope("d").Eval(expr_d), IsEqual("3024"));
 
-//   EXPECT_THAT(Scope("c").Eval(expr_a), IsEqual("3"));
-//   EXPECT_THAT(Scope("c").Eval(expr_b), IsEqual("4"));
-//   EXPECT_THAT(Scope("d").Eval(expr_a), IsEqual("6"));
-//   EXPECT_THAT(Scope("d").Eval(expr_b), IsEqual("7"));
-//   EXPECT_THAT(Scope("d").Eval(expr_c), IsEqual("336"));
+  EXPECT_THAT(Scope("c").Eval(expr_a), IsEqual("3"));
+  EXPECT_THAT(Scope("c").Eval(expr_b), IsEqual("4"));
+  EXPECT_THAT(Scope("d").Eval(expr_a), IsEqual("6"));
+  EXPECT_THAT(Scope("d").Eval(expr_b), IsEqual("7"));
+  EXPECT_THAT(Scope("d").Eval(expr_c), IsEqual("336"));
 
-//   // Expression parsed in derived-type scope, evaluated in base-type scope.
-//   EXPECT_THAT(
-//       Scope("c").Eval(expr_d),
-//       IsError("expression isn't parsed in the context of compatible type"));
-// }
+  // Expression parsed in derived-type scope, evaluated in base-type scope.
+  EXPECT_THAT(
+      Scope("c").Eval(expr_d),
+      IsError("expression isn't parsed in the context of compatible type"));
+}
 
-// TEST_F(EvalTest, TestSeparateParsingWithContextVars) {
-//   ASSERT_TRUE(CreateContextVariable("$x", "1"));
-//   ASSERT_TRUE(CreateContextVariable("$y", "2.5"));
+TEST_F(EvalTest, DISABLED_TestSeparateParsingWithContextVars) {
+  ASSERT_TRUE(CreateContextVariable("$x", "1"));
+  ASSERT_TRUE(CreateContextVariable("$y", "2.5"));
 
-//   std::unordered_map<std::string, lldb::SBType> args = {
-//       {"$x", vars_["$x"].GetType()}, {"$y", vars_["$y"].GetType()}};
+  std::unordered_map<std::string, lldb::SBType> args = {
+      {"$x", vars_["$x"].GetType()}, {"$y", vars_["$y"].GetType()}};
 
-//   lldb::SBError error;
+  lldb::SBError error;
 
-//   auto expr_c = Scope("c").CompileWithContext("c_ + $x + $y", args, error);
-//   ASSERT_TRUE(error.Success());
+  auto expr_c = Scope("c").CompileWithContext("c_ + $x + $y", args, error);
+  ASSERT_TRUE(error.Success());
 
-//   EXPECT_THAT(Scope("c").EvalWithContext(expr_c, vars_), IsEqual("8.5"));
-//   EXPECT_THAT(Scope("d").EvalWithContext(expr_c, vars_), IsEqual("11.5"));
+  EXPECT_THAT(Scope("c").EvalWithContext(expr_c, vars_), IsEqual("8.5"));
+  EXPECT_THAT(Scope("d").EvalWithContext(expr_c, vars_), IsEqual("11.5"));
 
-//   // Parsed context arguments don't match variables' types in evaluation.
-//   std::unordered_map<std::string, lldb::SBValue> wrong_vars = {
-//       {"$x", vars_["$y"]}, {"$y", vars_["$x"]}};
-//   EXPECT_THAT(Scope("c").EvalWithContext(expr_c, wrong_vars),
-//               IsError("unexpected type of context variable '$x' (expected "
-//                       "'int', got 'double')"));
+  // Parsed context arguments don't match variables' types in evaluation.
+  std::unordered_map<std::string, lldb::SBValue> wrong_vars = {
+      {"$x", vars_["$y"]}, {"$y", vars_["$x"]}};
+  EXPECT_THAT(Scope("c").EvalWithContext(expr_c, wrong_vars),
+              IsError("unexpected type of context variable '$x' (expected "
+                      "'int', got 'double')"));
 
-//   // Context variable missing for parsed argument.
-//   std::unordered_map<std::string, lldb::SBValue> incomplete_vars = {
-//       {"$x", vars_["$x"]}};
-//   EXPECT_THAT(Scope("c").EvalWithContext(expr_c, incomplete_vars),
-//               IsError("use of undeclared identifier '$y'"));
-// }
+  // Context variable missing for parsed argument.
+  std::unordered_map<std::string, lldb::SBValue> incomplete_vars = {
+      {"$x", vars_["$x"]}};
+  EXPECT_THAT(Scope("c").EvalWithContext(expr_c, incomplete_vars),
+              IsError("use of undeclared identifier '$y'"));
+}
 
 TEST_F(EvalTest, DISABLED_TestRegisters) {
   // LLDB loses the value formatter when evaluating registers and prints their

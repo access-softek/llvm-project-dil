@@ -667,7 +667,9 @@ static void TestStaticConst() {
   outer::inner::MyVars my_outer_inner_vars;
 
   // BREAK(TestStaticConstDeclaredInline)
+  // BREAK(TestStaticConstDeclaredInlineScoped)
   // BREAK(TestStaticConstDeclaredOutsideTheClass)
+  // BREAK(TestStaticConstDeclaredOutsideTheClassScoped)
 }
 
 // Referenced by TestTemplateTypes.
@@ -863,6 +865,7 @@ void TestBitField() {
   AlignedBitFieldStruct abf = (AlignedBitFieldStruct &)data;
 
   // BREAK(TestBitField)
+  // BREAK(TestBitFieldScoped)
   // BREAK(TestBitFieldPromotion)
   // BREAK(TestBitFieldWithSideEffects)
 }

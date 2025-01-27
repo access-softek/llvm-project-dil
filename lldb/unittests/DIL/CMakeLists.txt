@@ -7,12 +7,7 @@ add_lldb_unittest(LLDBDILTests
     lldbUtilityHelpers
     LLVMTestingSupport
   )
+add_subdirectory(Inputs)
+add_dependencies(LLDBDILTests test_binary)
 
-set(test_lib
-  test_binary_libc++.bin
-  test_binary.cc
-  )
-
-add_unittest_inputs(LLDBDILTests "${test_lib}")
-
-
+add_unittest_inputs(LLDBDILTests "test_binary.cc")

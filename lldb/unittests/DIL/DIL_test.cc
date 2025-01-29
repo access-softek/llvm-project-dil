@@ -3245,10 +3245,9 @@ TEST_F(EvalTest, TestUniquePtr) {
   EXPECT_THAT(Eval("*(NodeU**)&ptr_node.__ptr_"), IsOk());
   EXPECT_THAT(Eval("(*(NodeU**)&ptr_node.__ptr_)->value"), IsEqual("1"));
 
-  EXPECT_THAT(Eval("ptr_node.__ptr_.__value_"), IsOk());
-  EXPECT_THAT(Eval("ptr_node.__ptr_.__value_->value"), IsEqual("1"));
-  EXPECT_THAT(Eval("ptr_node.__ptr_.__value_->next.__ptr_.__value_->value"),
-              IsEqual("2"));
+  EXPECT_THAT(Eval("ptr_node.__ptr_"), IsOk());
+  EXPECT_THAT(Eval("ptr_node.__ptr_->value"), IsEqual("1"));
+  EXPECT_THAT(Eval("ptr_node.__ptr_->next.__ptr_->value"), IsEqual("2"));
 #endif
 }
 

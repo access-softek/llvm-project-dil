@@ -35,8 +35,8 @@
 #include "lldb/API/SBTarget.h"
 #include "lldb/API/SBThread.h"
 #include "lldb/API/SBType.h"
-#include "runner.h"
-#include "traits.h"
+#include "Runner.h"
+#include "Traits.h"
 #endif
 
 // DISALLOW_COPY_AND_ASSIGN is also defined in

@@ -13,7 +13,7 @@ if ("libcxx" IN_LIST LLVM_ENABLE_RUNTIMES)
     set(LIBCXX_GENERATED_INCLUDE_TARGET_DIR "${CMAKE_BINARY_DIR}/include/c++/v1")
   endif()
 
-  get_target_property(EXE_PATH LLDBDILTests RUNTIME_OUTPUT_DIRECTORY)
+  get_target_property(EXE_PATH DILTests RUNTIME_OUTPUT_DIRECTORY)
   add_custom_command(
     OUTPUT test_binary.bin
     COMMAND $<TARGET_FILE:clang> ${CMAKE_CURRENT_SOURCE_DIR}/test_binary.cc

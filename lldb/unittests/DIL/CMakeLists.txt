@@ -1,6 +1,6 @@
-add_lldb_unittest(LLDBDILTests
-  DIL_test.cc
-  runner.cpp
+add_lldb_unittest(DILTests
+  DILTests.cpp
+  Runner.cpp
 
   LINK_LIBS
     liblldb
@@ -8,6 +8,6 @@ add_lldb_unittest(LLDBDILTests
     LLVMTestingSupport
   )
 add_subdirectory(Inputs)
-add_dependencies(LLDBDILTests test_binary)
+add_dependencies(DILTests test_binary)
 
-add_unittest_inputs(LLDBDILTests "test_binary.cc")
+add_unittest_inputs(DILTests "test_binary.cc")

@@ -687,14 +687,14 @@ std::string FormatDiagnostics(llvm::StringRef text, const std::string& message,
   // Get a view of the current line in the source code and the position of the
   // diagnostics pointer.
   llvm::StringRef line = text.slice(line_start, line_end);
-  int32_t arrow = loc + 1; // Column off starts at 1, not 0.
+  int32_t arrow = loc + 1; // Column offset starts at 1, not 0.
 
   // Calculate the padding in case we point outside of the expression (this can
   // happen if the parser expected something, but got EOF).˚
   size_t expr_rpad = std::max(0, arrow - static_cast<int32_t>(line.size()));
   size_t arrow_rpad = std::max(0, static_cast<int32_t>(line.size()) - arrow);
 
-  return llvm::formatv("<expr:1:{0}>: {1}\n{2}\n{3}", loc,
+  return llvm::formatv("<expr:1:{0}>: {1}\n{2}\n{3}", loc + 1,
                        message, llvm::fmt_pad(line, 0, expr_rpad),
                        llvm::fmt_pad("^", arrow - 1, arrow_rpad));
 }

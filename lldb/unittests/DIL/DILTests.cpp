@@ -1571,12 +1571,6 @@ TEST_F(EvalTest, TestCxxStaticCast) {
               IsError("static_cast from 'int *' to 'float *' is not allowed"));
 
   // Cast to nullptr.
-  GTEST_SKIP() << "Segfault when retrieving result value in the matcher";
-  EXPECT_THAT(Eval("static_cast<nullptr_t>(nullptr)"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  EXPECT_THAT(Eval("static_cast<nullptr_t>(0)"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-
   EXPECT_THAT(Eval("static_cast<nullptr_t>((int)0)"),
               IsError("static_cast from 'int' to 'nullptr_t' (canonically "
                       "referred to as 'std::nullptr_t')"
@@ -1606,6 +1600,13 @@ TEST_F(EvalTest, TestCxxStaticCast) {
               IsError("unknown type name 'parent'"));
   EXPECT_THAT(Eval("static_cast<T_1<int> CxxParent>(1)"),
               IsError("two or more data types in declaration of 'type name'"));
+
+  // Cast to nullptr.
+  GTEST_SKIP() << "Segfault when retrieving result value in the matcher";
+  EXPECT_THAT(Eval("static_cast<nullptr_t>(nullptr)"),
+              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+  EXPECT_THAT(Eval("static_cast<nullptr_t>(0)"),
+              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 }
 
 TEST_F(EvalTest, TestCastDerivedToBase) {
@@ -1771,27 +1772,6 @@ TEST_F(EvalTest, TestCxxReinterpretCast) {
   EXPECT_THAT(Eval("*reinterpret_cast<long long*>(arr)"),
               IsEqual("8589934593")); // 8589934593 == 0x0000000200000001
 
-  // Casting to nullptr_t or nullptr_t to pointer types isn't allowed.
-  EXPECT_THAT(
-      Eval("reinterpret_cast<void*>(nullptr)"),
-      IsError("reinterpret_cast from 'std::nullptr_t' to 'void *' is not "
-              "allowed"));
-  GTEST_SKIP() << "Unknown error string mismatch";
-  EXPECT_THAT(
-      Eval("reinterpret_cast<nullptr_t>(ptr)"),
-      IsError("reinterpret_cast from 'int *' to 'nullptr_t' "
-              "(canonically referred to as 'std::nullptr_t') is not allowed"));
-  GTEST_SKIP() << "Unknown error string mismatch";
-  EXPECT_THAT(
-      Eval("reinterpret_cast<nullptr_t>(0)"),
-      IsError("reinterpret_cast from 'int' to 'nullptr_t' "
-              "(canonically referred to as 'std::nullptr_t') is not allowed"));
-  GTEST_SKIP() << "Unknown error string mismatch";
-  EXPECT_THAT(
-      Eval("reinterpret_cast<nullptr_t>(nullptr)"),
-      IsError("reinterpret_cast from 'std::nullptr_t' to 'nullptr_t' "
-              "(canonically referred to as 'std::nullptr_t') is not allowed"));
-
   // L-values can be converted to reference type.
   EXPECT_THAT(Eval("reinterpret_cast<CxxBase&>(arr[0]).a"), IsEqual("1"));
   EXPECT_THAT(Eval("reinterpret_cast<CxxBase&>(arr).b"), IsEqual("2"));
@@ -1812,6 +1792,25 @@ TEST_F(EvalTest, TestCxxReinterpretCast) {
               IsError("cannot take the address of an rvalue of type 'UEnum'"));
   EXPECT_THAT(Eval("&reinterpret_cast<int*>(arr)"),
               IsError("cannot take the address of an rvalue of type 'int *'"));
+
+  // Casting to nullptr_t or nullptr_t to pointer types isn't allowed.
+  EXPECT_THAT(
+      Eval("reinterpret_cast<void*>(nullptr)"),
+      IsError("reinterpret_cast from 'std::nullptr_t' to 'void *' is not "
+              "allowed"));
+  GTEST_SKIP() << "Unknown error string mismatch";
+  EXPECT_THAT(
+      Eval("reinterpret_cast<nullptr_t>(ptr)"),
+      IsError("reinterpret_cast from 'int *' to 'nullptr_t' "
+              "(canonically referred to as 'std::nullptr_t') is not allowed"));
+  EXPECT_THAT(
+      Eval("reinterpret_cast<nullptr_t>(0)"),
+      IsError("reinterpret_cast from 'int' to 'nullptr_t' "
+              "(canonically referred to as 'std::nullptr_t') is not allowed"));
+  EXPECT_THAT(
+      Eval("reinterpret_cast<nullptr_t>(nullptr)"),
+      IsError("reinterpret_cast from 'std::nullptr_t' to 'nullptr_t' "
+              "(canonically referred to as 'std::nullptr_t') is not allowed"));
 }
 
 TEST_F(EvalTest, TestQualifiedId) {
@@ -2610,9 +2609,6 @@ TEST_F(EvalTest, TestTernaryOperator) {
   EXPECT_THAT(Eval("true ? nullptr : (int*)15"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 
-  GTEST_SKIP() << "Segfault when retrieving result value in the matcher";
-  EXPECT_THAT(Eval("true ? 0 : nullptr"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
   EXPECT_THAT(Eval("true ? nullptr : 0"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 
@@ -2669,8 +2665,12 @@ TEST_F(EvalTest, TestTernaryOperator) {
 
   // Use pointers and arrays in bool context.
   EXPECT_THAT(Eval("pi ? 1 : 2"), IsEqual("1"));
-  EXPECT_THAT(Eval("nullptr ? 1 : 2"), IsEqual("2"));
   EXPECT_THAT(Eval("arr2 ? 1 : 2"), IsEqual("1"));
+
+  GTEST_SKIP() << "Segfault when retrieving result value in the matcher";
+  EXPECT_THAT(Eval("true ? 0 : nullptr"),
+              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
+  EXPECT_THAT(Eval("nullptr ? 1 : 2"), IsEqual("2"));
 }
 
 TEST_F(EvalTest, TestSizeOf) {

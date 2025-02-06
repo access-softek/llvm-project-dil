@@ -6,108 +6,20 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLDB_VALUEOBJECT_DILLEXER_H_
-#define LLDB_VALUEOBJECT_DILLEXER_H_
+#ifndef LLDB_VALUEOBJECT_DILLEXER_H
+#define LLDB_VALUEOBJECT_DILLEXER_H
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/TargetParser/Host.h"
-
+#include "llvm/Support/Error.h"
 #include <cstdint>
 #include <memory>
-#include <limits.h>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "llvm/ADT/StringRef.h"
 
-namespace lldb_private {
-
-namespace dil {
-
-enum class TokenKind {
-  amp,
-  ampamp,
-  ampequal,
-  arrow,
-  caret,
-  caretequal,
-  char_constant,
-  colon,
-  coloncolon,
-  comma,
-  eof,
-  equal,
-  equalequal,
-  exclaim,
-  exclaimequal,
-  flt,
-  greater,
-  greaterequal,
-  greatergreater,
-  greatergreaterequal,
-  identifier,
-  integer,
-  invalid,
-  kw_bool,
-  kw_char,
-  kw_char16_t,
-  kw_char32_t,
-  kw_const,
-  kw_double,
-  kw_dynamic_cast,
-  kw_false,
-  kw_float,
-  kw_int,
-  kw_long,
-  kw_namespace,
-  kw_nullptr,
-  kw_reinterpret_cast,
-  kw_short,
-  kw_signed,
-  kw_sizeof,
-  kw_static_cast,
-  kw_this,
-  kw_true,
-  kw_unsigned,
-  kw_void,
-  kw_volatile,
-  kw_wchar_t,
-  l_paren,
-  l_square,
-  less,
-  lessequal,
-  lessless,
-  lesslessequal,
-  minus,
-  minusequal,
-  minusminus,
-  none,
-  numeric_constant,
-  percent,
-  percentequal,
-  period,
-  pipe,
-  pipeequal,
-  pipepipe,
-  plus,
-  plusequal,
-  plusplus,
-  question,
-  r_paren,
-  r_square,
-  slash,
-  slashequal,
-  star,
-  starequal,
-  string_literal,
-  tilde,
-  unknown,
-  utf8_char_constant,
-  utf8_string_literal,
-  wide_char_constant,
-  wide_string_literal,
-  word,
-};
+namespace lldb_private::dil {
 
 enum class TypeSpecifier {
   kBool,
@@ -137,170 +49,205 @@ enum class NumberKind {
   eNone
 };
 
-class DILToken {
+class Token {
  public:
-  DILToken (dil::TokenKind kind, std::string spelling, uint32_t start,
-            uint32_t len) :
-      m_kind(kind), m_spelling(spelling), m_start_pos(start), m_length(len) {}
+  enum Kind {
+    amp,
+    ampamp,
+    ampequal,
+    arrow,
+    caret,
+    caretequal,
+    char_constant,
+    colon,
+    coloncolon,
+    comma,
+    eof,
+    equal,
+    equalequal,
+    exclaim,
+    exclaimequal,
+    flt,
+    greater,
+    greaterequal,
+    greatergreater,
+    greatergreaterequal,
+    identifier,
+    integer,
+    kw_bool,
+    kw_char,
+    kw_char16_t,
+    kw_char32_t,
+    kw_const,
+    kw_double,
+    kw_dynamic_cast,
+    kw_false,
+    kw_float,
+    kw_int,
+    kw_long,
+    kw_namespace,
+    kw_nullptr,
+    kw_reinterpret_cast,
+    kw_short,
+    kw_signed,
+    kw_sizeof,
+    kw_static_cast,
+    kw_this,
+    kw_true,
+    kw_unsigned,
+    kw_void,
+    kw_volatile,
+    kw_wchar_t,
+    l_paren,
+    l_square,
+    less,
+    lessequal,
+    lessless,
+    lesslessequal,
+    minus,
+    minusequal,
+    minusminus,
+    numeric_constant,
+    percent,
+    percentequal,
+    period,
+    pipe,
+    pipeequal,
+    pipepipe,
+    plus,
+    plusequal,
+    plusplus,
+    question,
+    r_paren,
+    r_square,
+    slash,
+    slashequal,
+    star,
+    starequal,
+    string_literal,
+    tilde,
+    utf8_char_constant,
+    utf8_string_literal,
+    wide_char_constant,
+    wide_string_literal,
+  };
 
-  DILToken () :
-      m_kind(dil::TokenKind::none), m_spelling(""), m_start_pos(0),
-      m_length(0) {}
+  Token (Kind kind, std::string spelling, uint32_t start) :
+      m_kind(kind), m_spelling(std::move(spelling)), m_start_pos(start) {}
 
-  void setKind(dil::TokenKind kind) { m_kind = kind; }
-  dil::TokenKind getKind() const { return m_kind; }
+  Kind GetKind() const { return m_kind; }
 
-  std::string getSpelling() const { return m_spelling; }
+  std::string GetSpelling() const { return m_spelling; }
 
-  uint32_t getLength() const { return m_length; }
+  bool Is (Kind kind) const { return m_kind == kind; }
 
-  bool is (dil::TokenKind kind) const { return m_kind == kind; }
+  bool IsNot(Kind kind) const { return m_kind != kind; }
 
-  bool isNot(dil::TokenKind kind) const { return m_kind != kind; }
-
-  bool isOneOf(dil::TokenKind kind1, dil::TokenKind kind2) const {
-    return is(kind1) || is(kind2);
+  bool IsOneOf(Kind kind1, Kind kind2) const {
+    return Is(kind1) || Is(kind2);
   }
 
-  template <typename... Ts> bool isOneOf(dil::TokenKind kind, Ts... Ks) const {
-    return is(kind) || isOneOf(Ks...);
+  template <typename... Ts> bool IsOneOf(Kind kind, Ts... Ks) const {
+    return Is(kind) || IsOneOf(Ks...);
   }
 
-  uint32_t getLocation() const { return m_start_pos; }
+  uint32_t GetLocation() const { return m_start_pos; }
 
-  void setValues (dil::TokenKind kind, std::string spelling,
-                  uint32_t start, uint32_t len) {
-    m_kind = kind;
-    m_spelling = spelling;
-    m_start_pos = start;
-    m_length = len;
-  }
-
-  static const std::string getTokenName(dil::TokenKind kind);
+  static llvm::StringRef GetTokenName(Kind kind);
 
  private:
-  dil::TokenKind m_kind;
+  Kind m_kind;
   std::string m_spelling;
   uint32_t m_start_pos; // within entire expression string
-  uint32_t m_length;
 };
 
-class DILSourceManager {
- public:
-  static std::shared_ptr<DILSourceManager> Create(std::string expr);
-
-  // This class cannot be safely moved because of the dependency between
-  // `m_expr` and `m_smff`. Users are supposed to pass around the shared
-  // pointer.
-  DILSourceManager(DILSourceManager&&) = delete;
-  DILSourceManager(const DILSourceManager&) = delete;
-  DILSourceManager& operator=(DILSourceManager const&) = delete;
-
-  std::string GetSource() { return m_expr; }
-
- private:
-  explicit DILSourceManager(std::string expr)  : m_expr(std::move(expr)) {}
-
- private:
-  // Store the expression, since SourceManagerForFile doesn't take the
-  // ownership.
-  std::string m_expr;
-};
-
-
+/// Class for doing the simple lexing required by DIL.
 class DILLexer {
+
+  friend class DILParser;
+  friend class NumericLiteralParser;
+  friend class CharLiteralParser;
+  friend class StringLiteralParser;
+
  public:
 
-  DILLexer(std::shared_ptr<DILSourceManager> dil_sm) :
-      m_expr(dil_sm->GetSource()) {
-    m_cur_pos = m_expr.begin();
-    // Use UINT_MAX to indicate invalid/uninitialized value.
-    m_tokens_idx = UINT_MAX;
+  /// Lexes all the tokens in expr and calls the private constructor
+  /// with the lexed tokens.
+  static llvm::Expected<DILLexer> Create(llvm::StringRef expr);
+
+  /// Return the current token to be handled by the DIL parser.
+  const Token& GetCurrentToken() { return m_lexed_tokens[m_tokens_idx]; }
+
+  /// Advance the current token position by N.
+  void Advance(uint32_t N = 1) {
+    if (m_tokens_idx + N >= m_lexed_tokens.size())
+      // N is too large; advance to the end of the lexed tokens.
+      m_tokens_idx = m_lexed_tokens.size() - 1;
+    else
+      m_tokens_idx += N;
   }
 
-  bool Lex(DILToken &result, bool look_ahead=false);
-
-  bool Is_Word(std::string::iterator start, uint32_t& length);
-
-  void ConsumeNumberBody(uint32_t &length, char &prev_ch);
-  bool Is_Number(std::string::iterator start, uint32_t& length,
-                 dil::NumberKind& kind);
-
-  bool isStringLiteral(dil::TokenKind kind) {
-    return (kind == dil::TokenKind::string_literal ||
-            kind == dil::TokenKind::wide_string_literal ||
-            kind == dil::TokenKind::utf8_string_literal);
-  }
-
-  uint32_t GetLocation() { return m_cur_pos - m_expr.begin(); }
-
-  /// Update 'result' with the other paremeter values, create a
-  /// duplicate token, and push the duplicate token onto the vector of
-  /// lexed tokens.
-  void UpdateLexedTokens (DILToken &result, dil::TokenKind tok_kind,
-                          std::string tok_str, uint32_t tok_pos,
-                          uint32_t tok_len);
-
-  /// Return the lexed token N+1 positions ahead of the 'current' token
+  /// Return the lexed token N positions ahead of the 'current' token
   /// being handled by the DIL parser.
-  const DILToken &LookAhead(uint32_t N);
+  const Token &LookAhead(uint32_t N) {
+    if (m_tokens_idx + N < m_lexed_tokens.size())
+      return m_lexed_tokens[m_tokens_idx + N];
 
-  const DILToken &AcceptLookAhead(uint32_t N);
+    // Last token should be an 'eof' token.
+    return m_lexed_tokens.back();
+  }
 
   /// Return the index for the 'current' token being handled by the DIL parser.
   uint32_t GetCurrentTokenIdx() { return m_tokens_idx; }
 
-  /// Return the current token to be handled by the DIL parser.
-  DILToken& GetCurrentToken() { return m_lexed_tokens[m_tokens_idx]; }
-
-  /// Update the index for the 'current' token, to point to the next lexed
-  /// token.
-  bool IncrementTokenIdx() {
-    if (m_tokens_idx >= m_lexed_tokens.size() - 1)
-      return false;
-
-    m_tokens_idx++;
-    return true;
-  }
-
   /// Set the index for the 'current' token (to be handled by the parser)
   /// to a particular position. Used for either committing 'look ahead' parsing
   /// or rolling back tentative parsing.
-  bool ResetTokenIdx(uint32_t new_value) {
-    if (new_value > m_lexed_tokens.size() - 1)
-      return false;
-
+  void ResetTokenIdx(uint32_t new_value) {
+    assert(new_value < m_lexed_tokens.size());
     m_tokens_idx = new_value;
-    return true;
   }
 
-  uint32_t getCharWidth() { return 8; }
-  uint32_t getIntWidth() { return 32; }
-  uint32_t getWCharWidth() { return 16; }
+  uint32_t GetCharWidth() { return 8; }
+  uint32_t GetIntWidth() { return 32; }
+  uint32_t GetWCharWidth() { return 16; }
 
+  uint32_t NumLexedTokens() { return m_lexed_tokens.size(); }
+
+  /// Insert a new token into the vector of lexed tokens, just after the current
+  /// index position. Used when splitting apart a multi-character token.
+  void InsertToken(Token new_token) {
+    std::vector<Token>::iterator iter = m_lexed_tokens.begin() + m_tokens_idx
+                                        + 1;
+    m_lexed_tokens.insert(iter, new_token);
+  }
 
  private:
-  // The input string we are lexing & parsing.
-  std::string m_expr;
+  DILLexer(llvm::StringRef dil_expr, std::vector<Token> lexed_tokens) :
+      m_expr(dil_expr), m_lexed_tokens(std::move(lexed_tokens)),
+      m_tokens_idx(0) {}
 
-  // The current position of the lexer within m_expr (the character position,
-  // within the string, of the next item to be lexed).
-  std::string::iterator m_cur_pos;
+  static llvm::Expected<Token> Lex(llvm::StringRef expr,
+                                   llvm::StringRef &remainder);
+
+  bool IsStringLiteral(Token::Kind kind) {
+    return (kind == Token::string_literal ||
+            kind == Token::wide_string_literal ||
+            kind == Token::utf8_string_literal);
+  }
+
+  // The input string we are lexing & parsing.
+  llvm::StringRef m_expr;
 
   // Holds all of the tokens lexed so far.
-  std::vector<DILToken> m_lexed_tokens;
+  std::vector<Token> m_lexed_tokens;
 
   // Index into m_lexed_tokens; indicates which token the DIL parser is
   // currently trying to parse/handle.
   uint32_t m_tokens_idx;
-
-  // "invalid" token; to be returned by lexer when 'look ahead' fails.
-  DILToken m_invalid_token;
 };
 
-} // namespace dil
-
-} // namespace lldb_private
+} // namespace lldb_private::dil
 
 
-#endif // LLDB_VALUEOBJECT_DILLEXER_H_
+#endif // LLDB_VALUEOBJECT_DILLEXER_H

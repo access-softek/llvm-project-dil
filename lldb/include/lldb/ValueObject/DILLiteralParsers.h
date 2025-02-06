@@ -18,9 +18,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 
-namespace lldb_private {
-
-namespace dil {
+namespace lldb_private::dil {
 
 class NumericLiteralParser {
  public:
@@ -144,19 +142,19 @@ private:
 class CharLiteralParser {
 private:
   uint64_t Value;
-  dil::TokenKind Kind;
+  Token::Kind Kind;
   bool IsMultiChar;
   bool HadError;
 
 public:
   CharLiteralParser(const char *begin, const char *end,
                     unsigned Loc, DILLexer &lexer,
-                    dil::TokenKind kind);
+                    Token::Kind kind);
 
   bool hadError() const { return HadError; }
-  bool isOrdinary() const { return Kind == dil::TokenKind::char_constant; }
-  bool isWide() const { return Kind == dil::TokenKind::wide_char_constant; }
-  bool isUTF8() const { return Kind == dil::TokenKind::utf8_char_constant; }
+  bool isOrdinary() const { return Kind == Token::char_constant; }
+  bool isWide() const { return Kind == Token::wide_char_constant; }
+  bool isUTF8() const { return Kind == Token::utf8_char_constant; }
   bool isMultiChar() const { return IsMultiChar; }
   uint64_t getValue() const { return Value; }
 };
@@ -170,14 +168,14 @@ class StringLiteralParser {
   unsigned MaxTokenLength;
   unsigned SizeBound;
   unsigned CharByteWidth;
-  dil::TokenKind Kind;
+  Token::Kind Kind;
   llvm::SmallString<512> ResultBuf;
   char *ResultPtr; // cursor
   StringLiteralEvalMethod EvalMethod;
   DILLexer &m_lexer;
 
 public:
-  StringLiteralParser(llvm::ArrayRef<DILToken> StringToks,
+  StringLiteralParser(llvm::ArrayRef<Token> StringToks,
                       DILLexer &lexer,
                       StringLiteralEvalMethod EvalMethod =
                       StringLiteralEvalMethod::Evaluated);
@@ -198,26 +196,24 @@ public:
   ///
   /// If the Diagnostics pointer is non-null, then this will do semantic
   /// checking of the string literal and emit errors and warnings.
-  unsigned getOffsetOfStringByte(const DILToken &TheTok,
+  unsigned getOffsetOfStringByte(const Token &TheTok,
                                  unsigned ByteNo) const;
 
-  bool isOrdinary() const { return Kind == dil::TokenKind::string_literal; }
-  bool isWide() const { return Kind == dil::TokenKind::wide_string_literal; }
-  bool isUTF8() const { return Kind == dil::TokenKind::utf8_string_literal; }
+  bool isOrdinary() const { return Kind == Token::string_literal; }
+  bool isWide() const { return Kind == Token::wide_string_literal; }
+  bool isUTF8() const { return Kind == Token::utf8_string_literal; }
   bool isUnevaluated() const {
     return EvalMethod == StringLiteralEvalMethod::Unevaluated;
   }
 
 private:
-  void init(llvm::ArrayRef<DILToken> StringToks,
+  void init(llvm::ArrayRef<Token> StringToks,
             DILLexer &lexer);
-  bool CopyStringFragment(const DILToken &Tok, const char *TokBegin,
+  bool CopyStringFragment(const Token &Tok, const char *TokBegin,
                           llvm::StringRef Fragment);
   void DiagnoseLexingError(unsigned Loc);
 };
 
-} // end namespace dil
-
-} // end namespace lldb_private
+} // end namespace lldb_private::dil
 
 #endif // LLDB_VALUEOBJECT_DILLiteralParsers_H

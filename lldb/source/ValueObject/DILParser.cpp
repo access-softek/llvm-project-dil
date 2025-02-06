@@ -54,17 +54,15 @@ constexpr unsigned type_width() {
 
 }  // namespace
 
-namespace lldb_private {
-
-namespace dil {
+namespace lldb_private::dil {
 
 inline void TokenKindsJoinImpl(std::ostringstream& os,
-                               dil::TokenKind k) {
-  os << "'" << DILToken::getTokenName(k) << "'";
+                               Token::Kind k) {
+  os << "'" << Token::GetTokenName(k).str() << "'";
 }
 
 template <typename... Ts>
-inline void TokenKindsJoinImpl(std::ostringstream& os, dil::TokenKind k,
+inline void TokenKindsJoinImpl(std::ostringstream& os, Token::Kind k,
                                Ts... ks) {
   TokenKindsJoinImpl(os, k);
   os << ", ";
@@ -72,7 +70,7 @@ inline void TokenKindsJoinImpl(std::ostringstream& os, dil::TokenKind k,
 }
 
 template <typename... Ts>
-inline std::string TokenKindsJoin(dil::TokenKind k, Ts... ks) {
+inline std::string TokenKindsJoin(Token::Kind k, Ts... ks) {
   std::ostringstream os;
   TokenKindsJoinImpl(os, k, ks...);
 
@@ -195,11 +193,6 @@ static bool GetPathToBaseType(CompilerType type, CompilerType target_base,
   return false;
 }
 
-std::shared_ptr<DILSourceManager> DILSourceManager::Create(std::string expr) {
-  return std::shared_ptr<DILSourceManager>(new DILSourceManager(
-      std::move(expr)));
-};
-
 static const char* ToString(TypeDeclaration::TypeSpecifier type_spec) {
   using TypeSpecifier = TypeDeclaration::TypeSpecifier;
   switch (type_spec) {
@@ -233,11 +226,11 @@ static const char* ToString(TypeDeclaration::SignSpecifier sign_spec) {
   }
 }
 
-static bool TokenEndsTemplateArgumentList(const DILToken& token) {
+static bool TokenEndsTemplateArgumentList(const Token& token) {
   // Note: in C++11 ">>" can be treated as "> >" and thus be a valid token
   // for the template argument list.
-  return token.isOneOf(dil::TokenKind::comma, dil::TokenKind::greater,
-                       dil::TokenKind::greatergreater);
+  return token.IsOneOf(Token::comma, Token::greater,
+                       Token::greatergreater);
 }
 
 static DILASTNodeUP InsertArrayToPointerConversion(DILASTNodeUP expr) {
@@ -561,21 +554,20 @@ static CompilerType UsualArithmeticConversions(
   return lhs->GetDereferencedResultType().GetCanonicalType();
 }
 
-static TypeDeclaration::TypeSpecifier ToTypeSpecifier(
-    dil::TokenKind kind) {
+static TypeDeclaration::TypeSpecifier ToTypeSpecifier(Token::Kind kind) {
   using TypeSpecifier = TypeDeclaration::TypeSpecifier;
   switch (kind) {
-    case dil::TokenKind::kw_void:     return TypeSpecifier::kVoid;
-    case dil::TokenKind::kw_bool:     return TypeSpecifier::kBool;
-    case dil::TokenKind::kw_char:     return TypeSpecifier::kChar;
-    case dil::TokenKind::kw_short:    return TypeSpecifier::kShort;
-    case dil::TokenKind::kw_int:      return TypeSpecifier::kInt;
-    case dil::TokenKind::kw_long:     return TypeSpecifier::kLong;
-    case dil::TokenKind::kw_float:    return TypeSpecifier::kFloat;
-    case dil::TokenKind::kw_double:   return TypeSpecifier::kDouble;
-    case dil::TokenKind::kw_wchar_t:  return TypeSpecifier::kWChar;
-    case dil::TokenKind::kw_char16_t: return TypeSpecifier::kChar16;
-    case dil::TokenKind::kw_char32_t: return TypeSpecifier::kChar32;
+    case Token::kw_void:     return TypeSpecifier::kVoid;
+    case Token::kw_bool:     return TypeSpecifier::kBool;
+    case Token::kw_char:     return TypeSpecifier::kChar;
+    case Token::kw_short:    return TypeSpecifier::kShort;
+    case Token::kw_int:      return TypeSpecifier::kInt;
+    case Token::kw_long:     return TypeSpecifier::kLong;
+    case Token::kw_float:    return TypeSpecifier::kFloat;
+    case Token::kw_double:   return TypeSpecifier::kDouble;
+    case Token::kw_wchar_t:  return TypeSpecifier::kWChar;
+    case Token::kw_char16_t: return TypeSpecifier::kChar16;
+    case Token::kw_char32_t: return TypeSpecifier::kChar32;
     default:
       assert(false && "invalid type specifier token");
       return TypeSpecifier::kUnknown;
@@ -679,26 +671,51 @@ lldb::BasicType PickCharType(const dil::StringLiteralParser& literal) {
   return lldb::eBasicTypeChar;
 }
 
-DILParser::DILParser(std::shared_ptr<DILSourceManager> dil_sm,
+std::string FormatDiagnostics(llvm::StringRef text, const std::string& message,
+                              uint32_t loc) {
+  // Get the location of the current token.
+  size_t loc_offset = (size_t) loc;
+
+  // Look for the start of the line.
+  size_t line_start = text.rfind('\n', loc_offset);
+  line_start = line_start == llvm::StringRef::npos ? 0 : line_start + 1;
+
+  // Look for the end of the line.
+  size_t line_end = text.find('\n', loc_offset);
+  line_end = line_end == llvm::StringRef::npos ? text.size() : line_end;
+
+  // Get a view of the current line in the source code and the position of the
+  // diagnostics pointer.
+  llvm::StringRef line = text.slice(line_start, line_end);
+  int32_t arrow = loc + 1; // Column off starts at 1, not 0.
+
+  // Calculate the padding in case we point outside of the expression (this can
+  // happen if the parser expected something, but got EOF).˚
+  size_t expr_rpad = std::max(0, arrow - static_cast<int32_t>(line.size()));
+  size_t arrow_rpad = std::max(0, static_cast<int32_t>(line.size()) - arrow);
+
+  return llvm::formatv("<expr:1:{0}>: {1}\n{2}\n{3}", loc,
+                       message, llvm::fmt_pad(line, 0, expr_rpad),
+                       llvm::fmt_pad("^", arrow - 1, arrow_rpad));
+}
+
+DILParser::DILParser(llvm::StringRef dil_input_expr, DILLexer lexer,
                      std::shared_ptr<ExecutionContextScope> exe_ctx_scope,
                      lldb::DynamicValueType use_dynamic, bool use_synthetic,
                      bool fragile_ivar, bool check_ptr_vs_member)
-    : m_ctx_scope(exe_ctx_scope), m_sm(dil_sm), m_use_dynamic(use_dynamic),
+    : m_ctx_scope(exe_ctx_scope), m_input_expr(dil_input_expr),
+    m_dil_lexer(lexer), m_dil_token(lexer.GetCurrentToken()),
+    m_use_dynamic(use_dynamic),
     m_use_synthetic(use_synthetic), m_fragile_ivar(fragile_ivar),
-    m_check_ptr_vs_member(check_ptr_vs_member),
-    m_dil_lexer(DILLexer(dil_sm))
+    m_check_ptr_vs_member(check_ptr_vs_member)
 {
-  // Initialize the token.
-  m_dil_token.setKind(dil::TokenKind::unknown);
 }
 
 DILASTNodeUP DILParser::Run(Status& error) {
-  ConsumeToken();
-
   DILASTNodeUP expr;
 
-  if (m_dil_lexer.isStringLiteral(m_dil_token.getKind()) &&
-      m_dil_lexer.LookAhead(0).is(dil::TokenKind::eof)) {
+  if (m_dil_lexer.IsStringLiteral(m_dil_token.GetKind()) &&
+      m_dil_lexer.LookAhead(1).Is(Token::eof)) {
     // A special case to handle a single string-literal token.
     expr = ParseStringLiteral();
   } else {
@@ -706,7 +723,7 @@ DILASTNodeUP DILParser::Run(Status& error) {
   }
 
 
-  Expect(dil::TokenKind::eof);
+  Expect(Token::eof);
 
   error = std::move(m_error);
   m_error.Clear();
@@ -727,7 +744,7 @@ CompilerType DILParser::ResolveTypeDeclarators(
   CompilerType bad_type;
   // Resolve pointers/references.
   for (auto& [tk, loc] : ptr_operators) {
-    if (tk == dil::TokenKind::star) {
+    if (tk == Token::star) {
       // Pointers to reference types are forbidden.
       if (type.IsReferenceType()) {
         BailOut(ErrorCode::kInvalidOperandType,
@@ -740,7 +757,7 @@ CompilerType DILParser::ResolveTypeDeclarators(
       // Get pointer type for the base type: e.g. int* -> int**.
       type = type.GetPointerType();
 
-    } else if (tk == dil::TokenKind::amp) {
+    } else if (tk == Token::amp) {
       // References to references are forbidden.
       if (type.IsReferenceType()) {
         BailOut(ErrorCode::kInvalidOperandType,
@@ -755,21 +772,21 @@ CompilerType DILParser::ResolveTypeDeclarators(
   return type;
 }
 
-bool DILParser::IsSimpleTypeSpecifierKeyword(DILToken token) const {
-  return token.isOneOf(
-      dil::TokenKind::kw_char, dil::TokenKind::kw_char16_t, dil::TokenKind::kw_char32_t,
-      dil::TokenKind::kw_wchar_t, dil::TokenKind::kw_bool, dil::TokenKind::kw_short,
-      dil::TokenKind::kw_int, dil::TokenKind::kw_long, dil::TokenKind::kw_signed,
-      dil::TokenKind::kw_unsigned, dil::TokenKind::kw_float, dil::TokenKind::kw_double,
-      dil::TokenKind::kw_void);
+bool DILParser::IsSimpleTypeSpecifierKeyword(Token token) const {
+  return token.IsOneOf(
+      Token::kw_char, Token::kw_char16_t, Token::kw_char32_t,
+      Token::kw_wchar_t, Token::kw_bool, Token::kw_short,
+      Token::kw_int, Token::kw_long, Token::kw_signed,
+      Token::kw_unsigned, Token::kw_float, Token::kw_double,
+      Token::kw_void);
 }
 
-bool DILParser::IsCvQualifier(DILToken token) const {
-  return token.isOneOf(dil::TokenKind::kw_const, dil::TokenKind::kw_volatile);
+bool DILParser::IsCvQualifier(Token token) const {
+  return token.IsOneOf(Token::kw_const, Token::kw_volatile);
 }
 
-bool DILParser::IsPtrOperator(DILToken token) const {
-  return token.isOneOf(dil::TokenKind::star, dil::TokenKind::amp);
+bool DILParser::IsPtrOperator(Token token) const {
+  return token.IsOneOf(Token::star, Token::amp);
 }
 
 bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
@@ -777,11 +794,11 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
   using SignSpecifier = TypeDeclaration::SignSpecifier;
 
   TypeSpecifier type_spec = type_decl->m_type_specifier;
-  uint32_t loc = m_dil_token.getLocation();
-  dil::TokenKind kind = m_dil_token.getKind();
+  uint32_t loc = m_dil_token.GetLocation();
+  Token::Kind kind = m_dil_token.GetKind();
 
   switch (kind) {
-    case dil::TokenKind::kw_int: {
+    case Token::kw_int: {
       // "int" can have signedness and be combined with "short", "long" and
       // "long long" (but not with another "int").
       if (type_decl->m_has_int_specifier) {
@@ -808,7 +825,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       return false;
     }
 
-    case dil::TokenKind::kw_long: {
+    case Token::kw_long: {
       // "long" can have signedness and be combined with "int" or "long" to
       // form "long long".
       if (type_spec == TypeSpecifier::kUnknown ||
@@ -830,7 +847,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       return false;
     }
 
-    case dil::TokenKind::kw_short: {
+    case Token::kw_short: {
       // "short" can have signedness and be combined with "int".
       if (type_spec == TypeSpecifier::kUnknown ||
           type_spec == TypeSpecifier::kInt) {
@@ -845,7 +862,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       return false;
     }
 
-    case dil::TokenKind::kw_char: {
+    case Token::kw_char: {
       // "char" can have signedness, but it cannot be combined with any other
       // type specifier.
       if (type_spec == TypeSpecifier::kUnknown) {
@@ -860,7 +877,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       return false;
     }
 
-    case dil::TokenKind::kw_double: {
+    case Token::kw_double: {
       // "double" can be combined with "long" to form "long double", but it
       // cannot be combined with signedness specifier.
       if (type_decl->m_sign_specifier != SignSpecifier::kUnknown) {
@@ -883,12 +900,12 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       return false;
     }
 
-    case dil::TokenKind::kw_bool:
-    case dil::TokenKind::kw_void:
-    case dil::TokenKind::kw_float:
-    case dil::TokenKind::kw_wchar_t:
-    case dil::TokenKind::kw_char16_t:
-    case dil::TokenKind::kw_char32_t: {
+    case Token::kw_bool:
+    case Token::kw_void:
+    case Token::kw_float:
+    case Token::kw_wchar_t:
+    case Token::kw_char16_t:
+    case Token::kw_char32_t: {
       // These types cannot have signedness or be combined with any other type
       // specifiers.
       if (type_decl->m_sign_specifier != SignSpecifier::kUnknown) {
@@ -909,8 +926,8 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       return true;
     }
 
-    case dil::TokenKind::kw_signed:
-    case dil::TokenKind::kw_unsigned: {
+    case Token::kw_signed:
+    case Token::kw_unsigned: {
       // "signed" and "unsigned" cannot be combined with another signedness
       // specifier.
       if (type_decl->m_sign_specifier != SignSpecifier::kUnknown) {
@@ -936,7 +953,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
         return false;
       }
 
-      type_decl->m_sign_specifier = (kind == dil::TokenKind::kw_signed)
+      type_decl->m_sign_specifier = (kind == Token::kw_signed)
                                        ? SignSpecifier::kSigned
                                        : SignSpecifier::kUnsigned;
       return true;
@@ -949,14 +966,14 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
 }
 
 DILASTNodeUP DILParser::ParseStringLiteral() {
-  ExpectOneOf(dil::TokenKind::string_literal, dil::TokenKind::wide_string_literal,
-              dil::TokenKind::utf8_string_literal);
-  uint32_t loc = m_dil_token.getLocation();
+  ExpectOneOf(Token::string_literal, Token::wide_string_literal,
+              Token::utf8_string_literal);
+  uint32_t loc = m_dil_token.GetLocation();
 
   // TODO: Support parsing of joined string-literals (e.g. "abc" "def").
   // Currently, only a single token can be parsed into a string.
   dil::StringLiteralParser string_literal(
-      llvm::ArrayRef<DILToken>(m_dil_token), m_dil_lexer);
+      llvm::ArrayRef<Token>(m_dil_token), m_dil_lexer);
 
   if (string_literal.hadError) {
     // TODO: Use ErrorCode::kInvalidStringLiteral in the future.
@@ -1020,30 +1037,30 @@ DILASTNodeUP DILParser::ParseAssignmentExpression() {
   auto lhs = ParseLogicalOrExpression();
 
   // Check if it's an assignment expression.
-  if (m_dil_token.isOneOf(dil::TokenKind::equal, dil::TokenKind::starequal,
-                     dil::TokenKind::slashequal, dil::TokenKind::percentequal,
-                     dil::TokenKind::plusequal, dil::TokenKind::minusequal,
-                     dil::TokenKind::greatergreaterequal, dil::TokenKind::lesslessequal,
-                     dil::TokenKind::ampequal, dil::TokenKind::caretequal,
-                     dil::TokenKind::pipeequal)) {
+  if (m_dil_token.IsOneOf(Token::equal, Token::starequal,
+                     Token::slashequal, Token::percentequal,
+                     Token::plusequal, Token::minusequal,
+                     Token::greatergreaterequal, Token::lesslessequal,
+                     Token::ampequal, Token::caretequal,
+                     Token::pipeequal)) {
     // That's an assignment!
-    DILToken token = m_dil_token;
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseAssignmentExpression();
-    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.getKind()),
-                        std::move(lhs), std::move(rhs), token.getLocation());
+    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
+                        std::move(lhs), std::move(rhs), token.GetLocation());
   }
 
   // Check if it's a conditional expression.
-  if (m_dil_token.is(dil::TokenKind::question)) {
-    DILToken token = m_dil_token;
+  if (m_dil_token.Is(Token::question)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto true_val = ParseExpression();
-    Expect(dil::TokenKind::colon);
+    Expect(Token::colon);
     ConsumeToken();
     auto false_val = ParseAssignmentExpression();
     lhs = BuildTernaryOp(std::move(lhs), std::move(true_val),
-                         std::move(false_val), token.getLocation());
+                         std::move(false_val), token.GetLocation());
   }
 
   return lhs;
@@ -1057,12 +1074,12 @@ DILASTNodeUP DILParser::ParseAssignmentExpression() {
 DILASTNodeUP DILParser::ParseLogicalOrExpression() {
   auto lhs = ParseLogicalAndExpression();
 
-  while (m_dil_token.is(dil::TokenKind::pipepipe)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.Is(Token::pipepipe)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseLogicalAndExpression();
     lhs = BuildBinaryOp(BinaryOpKind::LOr, std::move(lhs), std::move(rhs),
-                        token.getLocation());
+                        token.GetLocation());
   }
 
   return lhs;
@@ -1076,12 +1093,12 @@ DILASTNodeUP DILParser::ParseLogicalOrExpression() {
 DILASTNodeUP DILParser::ParseLogicalAndExpression() {
   auto lhs = ParseInclusiveOrExpression();
 
-  while (m_dil_token.is(dil::TokenKind::ampamp)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.Is(Token::ampamp)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseInclusiveOrExpression();
     lhs = BuildBinaryOp(BinaryOpKind::LAnd, std::move(lhs), std::move(rhs),
-                        token.getLocation());
+                        token.GetLocation());
   }
 
   return lhs;
@@ -1095,12 +1112,12 @@ DILASTNodeUP DILParser::ParseLogicalAndExpression() {
 DILASTNodeUP DILParser::ParseInclusiveOrExpression() {
   auto lhs = ParseExclusiveOrExpression();
 
-  while (m_dil_token.is(dil::TokenKind::pipe)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.Is(Token::pipe)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseExclusiveOrExpression();
     lhs = BuildBinaryOp(BinaryOpKind::Or, std::move(lhs), std::move(rhs),
-                        token.getLocation());
+                        token.GetLocation());
   }
 
   return lhs;
@@ -1114,12 +1131,12 @@ DILASTNodeUP DILParser::ParseInclusiveOrExpression() {
 DILASTNodeUP DILParser::ParseExclusiveOrExpression() {
   auto lhs = ParseAndExpression();
 
-  while (m_dil_token.is(dil::TokenKind::caret)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.Is(Token::caret)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseAndExpression();
     lhs = BuildBinaryOp(BinaryOpKind::Xor, std::move(lhs), std::move(rhs),
-                        token.getLocation());
+                        token.GetLocation());
   }
 
   return lhs;
@@ -1133,12 +1150,12 @@ DILASTNodeUP DILParser::ParseExclusiveOrExpression() {
 DILASTNodeUP DILParser::ParseAndExpression() {
   auto lhs = ParseEqualityExpression();
 
-  while (m_dil_token.is(dil::TokenKind::amp)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.Is(Token::amp)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseEqualityExpression();
     lhs = BuildBinaryOp(BinaryOpKind::And, std::move(lhs), std::move(rhs),
-                        token.getLocation());
+                        token.GetLocation());
   }
 
   return lhs;
@@ -1153,12 +1170,12 @@ DILASTNodeUP DILParser::ParseAndExpression() {
 DILASTNodeUP DILParser::ParseEqualityExpression() {
   auto lhs = ParseRelationalExpression();
 
-  while (m_dil_token.isOneOf(dil::TokenKind::equalequal, dil::TokenKind::exclaimequal)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.IsOneOf(Token::equalequal, Token::exclaimequal)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseRelationalExpression();
-    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.getKind()),
-                        std::move(lhs), std::move(rhs), token.getLocation());
+    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
+                        std::move(lhs), std::move(rhs), token.GetLocation());
   }
 
   return lhs;
@@ -1175,13 +1192,13 @@ DILASTNodeUP DILParser::ParseEqualityExpression() {
 DILASTNodeUP DILParser::ParseRelationalExpression() {
   auto lhs = ParseShiftExpression();
 
-  while (m_dil_token.isOneOf(dil::TokenKind::less, dil::TokenKind::greater,
-                        dil::TokenKind::lessequal, dil::TokenKind::greaterequal)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.IsOneOf(Token::less, Token::greater,
+                        Token::lessequal, Token::greaterequal)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseShiftExpression();
-    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.getKind()),
-                        std::move(lhs), std::move(rhs), token.getLocation());
+    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
+                        std::move(lhs), std::move(rhs), token.GetLocation());
   }
 
   return lhs;
@@ -1196,12 +1213,12 @@ DILASTNodeUP DILParser::ParseRelationalExpression() {
 DILASTNodeUP DILParser::ParseShiftExpression() {
   auto lhs = ParseAdditiveExpression();
 
-  while (m_dil_token.isOneOf(dil::TokenKind::lessless, dil::TokenKind::greatergreater)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.IsOneOf(Token::lessless, Token::greatergreater)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseAdditiveExpression();
-    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.getKind()),
-                        std::move(lhs), std::move(rhs), token.getLocation());
+    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
+                        std::move(lhs), std::move(rhs), token.GetLocation());
   }
 
   return lhs;
@@ -1216,12 +1233,12 @@ DILASTNodeUP DILParser::ParseShiftExpression() {
 DILASTNodeUP DILParser::ParseAdditiveExpression() {
   auto lhs = ParseMultiplicativeExpression();
 
-  while (m_dil_token.isOneOf(dil::TokenKind::plus, dil::TokenKind::minus)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.IsOneOf(Token::plus, Token::minus)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseMultiplicativeExpression();
-    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.getKind()),
-                        std::move(lhs), std::move(rhs), token.getLocation());
+    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
+                        std::move(lhs), std::move(rhs), token.GetLocation());
   }
 
   return lhs;
@@ -1237,13 +1254,13 @@ DILASTNodeUP DILParser::ParseAdditiveExpression() {
 DILASTNodeUP DILParser::ParseMultiplicativeExpression() {
   auto lhs = ParseCastExpression();
 
-  while (m_dil_token.isOneOf(dil::TokenKind::star, dil::TokenKind::slash,
-                        dil::TokenKind::percent)) {
-    DILToken token = m_dil_token;
+  while (m_dil_token.IsOneOf(Token::star, Token::slash,
+                        Token::percent)) {
+    Token token = m_dil_token;
     ConsumeToken();
     auto rhs = ParseCastExpression();
-    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.getKind()),
-                        std::move(lhs), std::move(rhs), token.getLocation());
+    lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
+                        std::move(lhs), std::move(rhs), token.GetLocation());
   }
 
   return lhs;
@@ -1259,8 +1276,8 @@ DILASTNodeUP DILParser::ParseMultiplicativeExpression() {
 //
 DILASTNodeUP DILParser::ParseCastExpression() {
   // This can be a C-style cast, try parsing the contents as a type declaration.
-  if (m_dil_token.is(dil::TokenKind::l_paren)) {
-    DILToken token = m_dil_token;
+  if (m_dil_token.Is(Token::l_paren)) {
+    Token token = m_dil_token;
 
     // Enable lexer backtracking, so that we can rollback in case it's not
     // actually a type declaration.
@@ -1283,12 +1300,12 @@ DILASTNodeUP DILParser::ParseCastExpression() {
         return std::make_unique<ErrorNode>(bad_type);
       }
 
-      Expect(dil::TokenKind::r_paren);
+      Expect(Token::r_paren);
       ConsumeToken();
       auto rhs = ParseCastExpression();
 
       return BuildCStyleCast(type_id.value(), std::move(rhs),
-                             token.getLocation());
+                             token.GetLocation());
     }
 
     // Failed to parse the contents of the parentheses as a type declaration.
@@ -1320,31 +1337,31 @@ DILASTNodeUP DILParser::ParseCastExpression() {
 //    "!"
 //
 DILASTNodeUP DILParser::ParseUnaryExpression() {
-  if (m_dil_token.isOneOf(dil::TokenKind::plusplus, dil::TokenKind::minusminus,
-                     dil::TokenKind::star, dil::TokenKind::amp, dil::TokenKind::plus,
-                     dil::TokenKind::minus, dil::TokenKind::exclaim,
-                     dil::TokenKind::tilde)) {
-    DILToken token = m_dil_token;
-    uint32_t loc = token.getLocation();
+  if (m_dil_token.IsOneOf(Token::plusplus, Token::minusminus,
+                     Token::star, Token::amp, Token::plus,
+                     Token::minus, Token::exclaim,
+                     Token::tilde)) {
+    Token token = m_dil_token;
+    uint32_t loc = token.GetLocation();
     ConsumeToken();
     auto rhs = ParseCastExpression();
 
-    switch (token.getKind()) {
-      case dil::TokenKind::plusplus:
+    switch (token.GetKind()) {
+      case Token::plusplus:
         return BuildUnaryOp(UnaryOpKind::PreInc, std::move(rhs), loc);
-      case dil::TokenKind::minusminus:
+      case Token::minusminus:
         return BuildUnaryOp(UnaryOpKind::PreDec, std::move(rhs), loc);
-      case dil::TokenKind::star:
+      case Token::star:
         return BuildUnaryOp(UnaryOpKind::Deref, std::move(rhs), loc);
-      case dil::TokenKind::amp:
+      case Token::amp:
         return BuildUnaryOp(UnaryOpKind::AddrOf, std::move(rhs), loc);
-      case dil::TokenKind::plus:
+      case Token::plus:
         return BuildUnaryOp(UnaryOpKind::Plus, std::move(rhs), loc);
-      case dil::TokenKind::minus:
+      case Token::minus:
         return BuildUnaryOp(UnaryOpKind::Minus, std::move(rhs), loc);
-      case dil::TokenKind::tilde:
+      case Token::tilde:
         return BuildUnaryOp(UnaryOpKind::Not, std::move(rhs), loc);
-      case dil::TokenKind::exclaim:
+      case Token::exclaim:
         return BuildUnaryOp(UnaryOpKind::LNot, std::move(rhs), loc);
 
       default:
@@ -1352,8 +1369,8 @@ DILASTNodeUP DILParser::ParseUnaryExpression() {
     }
   }
 
-  if (m_dil_token.is(dil::TokenKind::kw_sizeof)) {
-    uint32_t sizeof_loc = m_dil_token.getLocation();
+  if (m_dil_token.Is(Token::kw_sizeof)) {
+    uint32_t sizeof_loc = m_dil_token.GetLocation();
     ConsumeToken();
 
     // [expr.sizeof](http://eel.is/c++draft/expr.sizeof#1)
@@ -1366,19 +1383,19 @@ DILASTNodeUP DILParser::ParseUnaryExpression() {
     CompilerType operand;
 
     // `(` can mean either a type_id or a parenthesized expression.
-    if (m_dil_token.is(dil::TokenKind::l_paren)) {
+    if (m_dil_token.Is(Token::l_paren)) {
       // Start tentative parsing (save token location/idx, for possible
       // rollback).
       uint32_t save_token_idx = m_dil_lexer.GetCurrentTokenIdx();
 
-      Expect(dil::TokenKind::l_paren);
+      Expect(Token::l_paren);
       ConsumeToken();
 
       // Parse the type definition and resolve the type.
       auto type_id = ParseTypeId();
       if (type_id) {
         // type_id requires parentheses, so there must be a closing one.
-        Expect(dil::TokenKind::r_paren);
+        Expect(Token::r_paren);
         ConsumeToken();
 
         operand = type_id.value();
@@ -1437,16 +1454,16 @@ DILASTNodeUP DILParser::ParsePostfixExpression() {
   CompilerType bad_type;
 
   // C++-style cast.
-  if (m_dil_token.isOneOf(dil::TokenKind::kw_static_cast, dil::TokenKind::kw_dynamic_cast,
-                     dil::TokenKind::kw_reinterpret_cast)) {
-    dil::TokenKind cast_kind = m_dil_token.getKind();
-    uint32_t cast_loc = m_dil_token.getLocation();
+  if (m_dil_token.IsOneOf(Token::kw_static_cast, Token::kw_dynamic_cast,
+                     Token::kw_reinterpret_cast)) {
+    Token::Kind cast_kind = m_dil_token.GetKind();
+    uint32_t cast_loc = m_dil_token.GetLocation();
     ConsumeToken();
 
-    Expect(dil::TokenKind::less);
+    Expect(Token::less);
     ConsumeToken();
 
-    uint32_t loc = m_dil_token.getLocation();
+    uint32_t loc = m_dil_token.GetLocation();
 
     // Parse the type definition and resolve the type.
     auto type_id = ParseTypeId(/*must_be_type_id*/ true);
@@ -1459,13 +1476,13 @@ DILASTNodeUP DILParser::ParsePostfixExpression() {
       return std::make_unique<ErrorNode>(bad_type);
     }
 
-    Expect(dil::TokenKind::greater);
+    Expect(Token::greater);
     ConsumeToken();
 
-    Expect(dil::TokenKind::l_paren);
+    Expect(Token::l_paren);
     ConsumeToken();
     auto rhs = ParseExpression();
-    Expect(dil::TokenKind::r_paren);
+    Expect(Token::r_paren);
     ConsumeToken();
 
     lhs = BuildCxxCast(cast_kind, type_id.value(), std::move(rhs), cast_loc);
@@ -1476,46 +1493,46 @@ DILASTNodeUP DILParser::ParsePostfixExpression() {
   }
   assert(lhs && "LHS of the postfix_expression can't be NULL.");
 
-  while (m_dil_token.isOneOf(dil::TokenKind::l_square, dil::TokenKind::period,
-                        dil::TokenKind::arrow, dil::TokenKind::plusplus,
-                        dil::TokenKind::minusminus)) {
-    DILToken token = m_dil_token;
-    switch (token.getKind()) {
-      case dil::TokenKind::period:
-      case dil::TokenKind::arrow: {
+  while (m_dil_token.IsOneOf(Token::l_square, Token::period,
+                        Token::arrow, Token::plusplus,
+                        Token::minusminus)) {
+    Token token = m_dil_token;
+    switch (token.GetKind()) {
+      case Token::period:
+      case Token::arrow: {
         ConsumeToken();
-        DILToken member_token = m_dil_token;
+        Token member_token = m_dil_token;
         auto member_id = ParseIdExpression();
         // Check if this is a function call.
-        if (m_dil_token.is(dil::TokenKind::l_paren)) {
+        if (m_dil_token.Is(Token::l_paren)) {
           // TODO: Check if `member_id` is actually a member function of `lhs`.
           // If not, produce a more accurate diagnostic.
           BailOut(ErrorCode::kNotImplemented,
                   "member function calls are not supported",
-                  m_dil_token.getLocation());
+                  m_dil_token.GetLocation());
         }
         lhs = BuildMemberOf(std::move(lhs), std::move(member_id),
-                            token.getKind() == dil::TokenKind::arrow,
-                            member_token.getLocation());
+                            token.GetKind() == Token::arrow,
+                            member_token.GetLocation());
         break;
       }
-      case dil::TokenKind::plusplus: {
+      case Token::plusplus: {
         ConsumeToken();
         return BuildUnaryOp(UnaryOpKind::PostInc, std::move(lhs),
-                            token.getLocation());
+                            token.GetLocation());
       }
-      case dil::TokenKind::minusminus: {
+      case Token::minusminus: {
         ConsumeToken();
         return BuildUnaryOp(UnaryOpKind::PostDec, std::move(lhs),
-                            token.getLocation());
+                            token.GetLocation());
       }
-      case dil::TokenKind::l_square: {
+      case Token::l_square: {
         ConsumeToken();
         auto rhs = ParseExpression();
-        Expect(dil::TokenKind::r_square);
+        Expect(Token::r_square);
         ConsumeToken();
         lhs = BuildBinarySubscript(std::move(lhs), std::move(rhs),
-                                   token.getLocation());
+                                   token.GetLocation());
         break;
       }
 
@@ -1540,28 +1557,28 @@ DILASTNodeUP DILParser::ParsePostfixExpression() {
 //
 DILASTNodeUP DILParser::ParsePrimaryExpression() {
   CompilerType bad_type;
-  if (m_dil_token.is(dil::TokenKind::numeric_constant)) {
+  if (m_dil_token.Is(Token::numeric_constant)) {
     return ParseNumericLiteral();
-  } else if (m_dil_token.isOneOf(dil::TokenKind::kw_true, dil::TokenKind::kw_false)) {
+  } else if (m_dil_token.IsOneOf(Token::kw_true, Token::kw_false)) {
     return ParseBooleanLiteral();
-  } else if (m_dil_token.isOneOf(dil::TokenKind::char_constant,
-                            dil::TokenKind::wide_char_constant,
-                            dil::TokenKind::utf8_char_constant)) {
+  } else if (m_dil_token.IsOneOf(Token::char_constant,
+                            Token::wide_char_constant,
+                            Token::utf8_char_constant)) {
     return ParseCharLiteral();
-  } else if (m_dil_lexer.isStringLiteral(m_dil_token.getKind())) {
+  } else if (m_dil_lexer.IsStringLiteral(m_dil_token.GetKind())) {
     // Note: Only expressions that consist of a single string literal can be
     // handled by DIL.
     BailOut(ErrorCode::kNotImplemented, "string literals are not supported",
-            m_dil_token.getLocation());
+            m_dil_token.GetLocation());
     return std::make_unique<ErrorNode>(bad_type);
-  } else if (m_dil_token.is(dil::TokenKind::kw_nullptr)) {
+  } else if (m_dil_token.Is(Token::kw_nullptr)) {
     return ParsePointerLiteral();
-  } else if (m_dil_token.isOneOf(dil::TokenKind::coloncolon, dil::TokenKind::identifier)) {
+  } else if (m_dil_token.IsOneOf(Token::coloncolon, Token::identifier)) {
     // Save the source location for the diagnostics message.
-    uint32_t loc = m_dil_token.getLocation();
+    uint32_t loc = m_dil_token.GetLocation();
     auto identifier = ParseIdExpression();
     // Check if this is a function call.
-    if (m_dil_token.is(dil::TokenKind::l_paren)) {
+    if (m_dil_token.Is(Token::l_paren)) {
       auto func_def = GetBuiltinFunctionDef(m_ctx_scope, identifier);
       if (!func_def) {
         BailOut(
@@ -1586,9 +1603,9 @@ DILASTNodeUP DILParser::ParsePrimaryExpression() {
     return std::make_unique<IdentifierNode>(loc, identifier, std::move(value),
                                             /*is_rvalue*/ false,
                                             IsContextVar(identifier));
-  } else if (m_dil_token.is(dil::TokenKind::kw_this)) {
+  } else if (m_dil_token.Is(Token::kw_this)) {
     // Save the source location for the diagnostics message.
-    uint32_t loc = m_dil_token.getLocation();
+    uint32_t loc = m_dil_token.GetLocation();
     ConsumeToken();
     auto value = LookupIdentifier("this", m_ctx_scope, m_use_dynamic);
     if (!value) {
@@ -1601,28 +1618,29 @@ DILASTNodeUP DILParser::ParsePrimaryExpression() {
     return std::make_unique<IdentifierNode>(loc, "this", std::move(value),
                                             /*is_rvalue*/ true,
                                             /*is_context_var*/ false);
-  } else if (m_dil_token.is(dil::TokenKind::l_paren)) {
+  } else if (m_dil_token.Is(Token::l_paren)) {
     // Check in case this is an anonynmous namespace
-    if (m_dil_lexer.LookAhead(0).is(dil::TokenKind::identifier)
-        && (((DILToken)m_dil_lexer.LookAhead(0)).getSpelling() == "anonymous")
-        && m_dil_lexer.LookAhead(1).is(dil::TokenKind::kw_namespace)
-        && m_dil_lexer.LookAhead(2).is(dil::TokenKind::r_paren)
-        && m_dil_lexer.LookAhead(3).is(dil::TokenKind::coloncolon)) {
-      m_dil_token = m_dil_lexer.AcceptLookAhead(3);
+    if (m_dil_lexer.LookAhead(1).Is(Token::identifier)
+        && (((Token)m_dil_lexer.LookAhead(1)).GetSpelling() == "anonymous")
+        && m_dil_lexer.LookAhead(2).Is(Token::kw_namespace)
+        && m_dil_lexer.LookAhead(3).Is(Token::r_paren)
+        && m_dil_lexer.LookAhead(4).Is(Token::coloncolon)) {
+      m_dil_lexer.Advance(4);
+      m_dil_token = m_dil_lexer.GetCurrentToken();
       std::string identifier = "(anonymous namespace)";
-      Expect(dil::TokenKind::coloncolon);
+      Expect(Token::coloncolon);
       // Save the source location for the diagnostics message.
-      uint32_t loc = m_dil_token.getLocation();
+      uint32_t loc = m_dil_token.GetLocation();
       ConsumeToken();
-      assert ((m_dil_token.is(dil::TokenKind::identifier) ||
-               m_dil_token.is(dil::TokenKind::l_paren)) &&
+      assert ((m_dil_token.Is(Token::identifier) ||
+               m_dil_token.Is(Token::l_paren)) &&
               "Expected an identifier or anonymous namespeace, but not found.");
       std::string identifier2 = ParseNestedNameSpecifier();
       if (identifier2.empty()) {
         // There was only an identifer, no more levels of nesting. Or there
         // was an invalid expression starting with a left parenthesis.
-        Expect(dil::TokenKind::identifier);
-        identifier2 = m_dil_token.getSpelling();
+        Expect(Token::identifier);
+        identifier2 = m_dil_token.GetSpelling();
         ConsumeToken();
       }
       identifier = identifier + "::" + identifier2;
@@ -1639,7 +1657,7 @@ DILASTNodeUP DILParser::ParsePrimaryExpression() {
     } else {
       ConsumeToken();
       auto expr = ParseExpression();
-      Expect(dil::TokenKind::r_paren);
+      Expect(Token::r_paren);
       ConsumeToken();
       return expr;
     }
@@ -1647,7 +1665,7 @@ DILASTNodeUP DILParser::ParsePrimaryExpression() {
 
   BailOut(ErrorCode::kInvalidExpressionSyntax,
           llvm::formatv("Unexpected token: {0}", TokenDescription(m_dil_token)),
-          m_dil_token.getLocation());
+          m_dil_token.GetLocation());
   return std::make_unique<ErrorNode>(bad_type);
 }
 
@@ -1657,7 +1675,7 @@ DILASTNodeUP DILParser::ParsePrimaryExpression() {
 //    type_specifier_seq [abstract_declarator]
 //
 std::optional<CompilerType> DILParser::ParseTypeId(bool must_be_type_id) {
-  uint32_t type_loc = m_dil_token.getLocation();
+  uint32_t type_loc = m_dil_token.GetLocation();
   TypeDeclaration type_decl;
   CompilerType bad_type;
 
@@ -1783,7 +1801,7 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
     if (type_decl->m_is_user_type) {
       BailOut(ErrorCode::kInvalidOperandType,
               "cannot combine with previous declaration specifier",
-              m_dil_token.getLocation());
+              m_dil_token.GetLocation());
       type_decl->m_has_error = true;
       return false;
     }
@@ -1805,12 +1823,12 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
   {
     // Try parsing optional global scope operator.
     bool global_scope = false;
-    if (m_dil_token.is(dil::TokenKind::coloncolon)) {
+    if (m_dil_token.Is(Token::coloncolon)) {
       global_scope = true;
       ConsumeToken();
     }
 
-    uint32_t loc = m_dil_token.getLocation();
+    uint32_t loc = m_dil_token.GetLocation();
 
     // Try parsing optional nested_name_specifier.
     auto nested_name_specifier = ParseNestedNameSpecifier();
@@ -1861,8 +1879,8 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
 std::string DILParser::ParseNestedNameSpecifier() {
   // The first token in nested_name_specifier is always an identifier, or
   // '(anonymous namespace)'.
-  if (m_dil_token.isNot(dil::TokenKind::identifier) &&
-      m_dil_token.isNot(dil::TokenKind::l_paren)) {
+  if (m_dil_token.IsNot(Token::identifier) &&
+      m_dil_token.IsNot(Token::l_paren)) {
     return "";
   }
 
@@ -1870,24 +1888,25 @@ std::string DILParser::ParseNestedNameSpecifier() {
   // the the string '(anonymous namespace)', which has a space in it (throwing
   // off normal parsing) and is not actually proper C++> Check to see if we're
   // looking at '(anonymous namespace)::...'
-  if (m_dil_token.is(dil::TokenKind::l_paren)) {
+  if (m_dil_token.Is(Token::l_paren)) {
     // Look for all the pieces, in order:
     // l_paren 'anonymous' 'namespace' r_paren coloncolon
-    if (m_dil_lexer.LookAhead(0).is(dil::TokenKind::identifier)
-        && (((DILToken)m_dil_lexer.LookAhead(0)).getSpelling() == "anonymous")
-        && m_dil_lexer.LookAhead(1).is(dil::TokenKind::kw_namespace)
-        && m_dil_lexer.LookAhead(2).is(dil::TokenKind::r_paren)
-        && m_dil_lexer.LookAhead(3).is(dil::TokenKind::coloncolon)) {
-      m_dil_token = m_dil_lexer.AcceptLookAhead(3);
+    if (m_dil_lexer.LookAhead(1).Is(Token::identifier)
+        && (((Token)m_dil_lexer.LookAhead(1)).GetSpelling() == "anonymous")
+        && m_dil_lexer.LookAhead(2).Is(Token::kw_namespace)
+        && m_dil_lexer.LookAhead(3).Is(Token::r_paren)
+        && m_dil_lexer.LookAhead(4).Is(Token::coloncolon)) {
+      m_dil_lexer.Advance(4);
+      m_dil_token = m_dil_lexer.GetCurrentToken();
 
-      assert ((m_dil_token.is(dil::TokenKind::identifier)
-               || m_dil_token.is(dil::TokenKind::l_paren)) &&
+      assert ((m_dil_token.Is(Token::identifier)
+               || m_dil_token.Is(Token::l_paren)) &&
               "Expected an identifier or anonymous namespace, but not found.");
       // Continue parsing the nested_namespace_specifier.
       std::string identifier2 = ParseNestedNameSpecifier();
       if (identifier2.empty()) {
-        Expect(dil::TokenKind::identifier);
-        identifier2 = m_dil_token.getSpelling();
+        Expect(Token::identifier);
+        identifier2 = m_dil_token.GetSpelling();
         ConsumeToken();
       }
       return "(anonymous namespace)::" + identifier2;
@@ -1898,11 +1917,12 @@ std::string DILParser::ParseNestedNameSpecifier() {
 
   // If the next token is scope ("::"), then this is indeed a
   // nested_name_specifier
-  if (m_dil_lexer.LookAhead(0).is(dil::TokenKind::coloncolon)) {
+  if (m_dil_lexer.LookAhead(1).Is(Token::coloncolon)) {
     // This nested_name_specifier is a single identifier.
-    std::string identifier = m_dil_token.getSpelling();
-    m_dil_token = m_dil_lexer.AcceptLookAhead(0);
-    Expect(dil::TokenKind::coloncolon);
+    std::string identifier = m_dil_token.GetSpelling();
+    m_dil_lexer.Advance(1);
+    m_dil_token = m_dil_lexer.GetCurrentToken();
+    Expect(Token::coloncolon);
     ConsumeToken();
     // Continue parsing the nested_name_specifier.
     return identifier + "::" + ParseNestedNameSpecifier();
@@ -1910,7 +1930,7 @@ std::string DILParser::ParseNestedNameSpecifier() {
 
   // If the next token starts a template argument list, then we have a
   // simple_template_id here.
-  if (m_dil_lexer.LookAhead(0).is(dil::TokenKind::less)) {
+  if (m_dil_lexer.LookAhead(1).Is(Token::less)) {
     // We don't know whether this will be a nested_name_identifier or just a
     // type_name. Prepare to rollback if this is not a nested_name_identifier.
 
@@ -1923,8 +1943,8 @@ std::string DILParser::ParseNestedNameSpecifier() {
     // If we did parse the type_name successfully and it's followed by the scope
     // operator ("::"), then this is indeed a nested_name_specifier. Continue
     // parsing nested_name_specifier.
-    if (!type_name.empty() && m_dil_token.is(dil::TokenKind::coloncolon)) {
-      m_dil_lexer.IncrementTokenIdx();
+    if (!type_name.empty() && m_dil_token.Is(Token::coloncolon)) {
+      m_dil_lexer.Advance();
       m_dil_token = m_dil_lexer.GetCurrentToken();
       // Continue parsing the nested_name_specifier.
       return type_name + "::" + ParseNestedNameSpecifier();
@@ -1961,21 +1981,22 @@ std::string DILParser::ParseNestedNameSpecifier() {
 //
 std::string DILParser::ParseTypeName() {
   // Typename always starts with an identifier.
-  if (m_dil_token.isNot(dil::TokenKind::identifier)) {
+  if (m_dil_token.IsNot(Token::identifier)) {
     return "";
   }
 
   // If the next token starts a template argument list, parse this type_name as
   // a simple_template_id.
-  if (m_dil_lexer.LookAhead(0).is(dil::TokenKind::less)) {
+  if (m_dil_lexer.LookAhead(1).Is(Token::less)) {
     // Parse the template_name. In this case it's just an identifier.
-    std::string template_name = m_dil_token.getSpelling();
-    m_dil_token = m_dil_lexer.AcceptLookAhead(0);
+    std::string template_name = m_dil_token.GetSpelling();
+    m_dil_lexer.Advance(1);
+    m_dil_token = m_dil_lexer.GetCurrentToken();
     // Consume the "<" token.
     ConsumeToken();
 
     // Short-circuit for missing template_argument_list.
-    if (m_dil_token.is(dil::TokenKind::greater)) {
+    if (m_dil_token.Is(Token::greater)) {
       ConsumeToken();
       return llvm::formatv("{0}<>", template_name);
     }
@@ -1983,17 +2004,19 @@ std::string DILParser::ParseTypeName() {
     // Try parsing template_argument_list.
     auto template_argument_list = ParseTemplateArgumentList();
 
-    if (m_dil_token.is(dil::TokenKind::greater)) {
+    if (m_dil_token.Is(Token::greater)) {
       // Single closing angle bracket is a valid end of the template argument
       // list, just consume it.
       ConsumeToken();
 
-    } else if (m_dil_token.is(dil::TokenKind::greatergreater)) {
+    } else if (m_dil_token.Is(Token::greatergreater)) {
       // C++11 allows using ">>" in nested template argument lists and C++-style
       // casts. In this case we alter change the token type to ">", but don't
       // consume it -- it will be done on the outer level when completing the
       // outer template argument list or C++-style cast.
-      m_dil_token.setKind(dil::TokenKind::greater);
+      uint32_t loc = m_dil_token.GetLocation();
+      m_dil_token = Token(Token::greater, ">", loc);
+      m_dil_lexer.InsertToken(Token(Token::greater, ">", loc+1));
 
     } else {
       // Not a valid end of the template argument list, failed to parse a
@@ -2005,7 +2028,7 @@ std::string DILParser::ParseTypeName() {
   }
 
   // Otherwise look for a class_name, enum_name or a typedef_name.
-  std::string identifier = m_dil_token.getSpelling();
+  std::string identifier = m_dil_token.GetSpelling();
   ConsumeToken();
 
   return identifier;
@@ -2036,7 +2059,7 @@ std::string DILParser::ParseTemplateArgumentList() {
 
     arguments.push_back(argument);
 
-  } while (m_dil_token.is(dil::TokenKind::comma));
+  } while (m_dil_token.Is(Token::comma));
 
   // Internally in LLDB/Clang nested template type names have extra spaces to
   // avoid having ">>". Add the extra space before the closing ">" if the
@@ -2091,10 +2114,10 @@ std::string DILParser::ParseTemplateArgument() {
     uint32_t save_token_idx = m_dil_lexer.GetCurrentTokenIdx();
 
     // Parse a numeric_literal.
-    if (m_dil_token.is(dil::TokenKind::numeric_constant)) {
+    if (m_dil_token.Is(Token::numeric_constant)) {
       // TODO: Actually parse the literal, check if it's valid and
       // canonize it (e.g. 8LL -> 8).
-      std::string numeric_literal = m_dil_token.getSpelling();
+      std::string numeric_literal = m_dil_token.GetSpelling();
       ConsumeToken();
 
       if (TokenEndsTemplateArgumentList(m_dil_token)) {
@@ -2140,11 +2163,11 @@ std::string DILParser::ParseTemplateArgument() {
 //    "&"
 //
 DILParser::PtrOperator DILParser::ParsePtrOperator() {
-  ExpectOneOf(dil::TokenKind::star, dil::TokenKind::amp);
+  ExpectOneOf(Token::star, Token::amp);
 
   PtrOperator ptr_operator;
-  if (m_dil_token.is(dil::TokenKind::star)) {
-    ptr_operator = std::make_tuple(dil::TokenKind::star, m_dil_token.getLocation());
+  if (m_dil_token.Is(Token::star)) {
+    ptr_operator = std::make_tuple(Token::star, m_dil_token.GetLocation());
     ConsumeToken();
 
     //
@@ -2160,8 +2183,8 @@ DILParser::PtrOperator DILParser::ParsePtrOperator() {
       ConsumeToken();
     }
 
-  } else if (m_dil_token.is(dil::TokenKind::amp)) {
-    ptr_operator = std::make_tuple(dil::TokenKind::amp, m_dil_token.getLocation());
+  } else if (m_dil_token.Is(Token::amp)) {
+    ptr_operator = std::make_tuple(Token::amp, m_dil_token.GetLocation());
     ConsumeToken();
   }
 
@@ -2179,12 +2202,12 @@ DILParser::PtrOperator DILParser::ParsePtrOperator() {
 //    ["::"] identifier
 //
 //  identifier:
-//    ? dil::TokenKind::identifier ?
+//    ? Token::identifier ?
 //
 std::string DILParser::ParseIdExpression() {
   // Try parsing optional global scope operator.
   bool global_scope = false;
-  if (m_dil_token.is(dil::TokenKind::coloncolon)) {
+  if (m_dil_token.Is(Token::coloncolon)) {
     global_scope = true;
     ConsumeToken();
   }
@@ -2205,8 +2228,8 @@ std::string DILParser::ParseIdExpression() {
   // No nested_name_specifier, but with global scope -- this is also a
   // qualified_id production. Follow the second production rule.
   else if (global_scope) {
-    Expect(dil::TokenKind::identifier);
-    std::string identifier = m_dil_token.getSpelling();
+    Expect(Token::identifier);
+    std::string identifier = m_dil_token.GetSpelling();
     ConsumeToken();
     return llvm::formatv("{0}{1}", global_scope ? "::" : "", identifier);
   }
@@ -2221,11 +2244,11 @@ std::string DILParser::ParseIdExpression() {
 //    identifier
 //
 //  identifier:
-//    ? dil::TokenKind::identifier ?
+//    ? Token::identifier ?
 //
 std::string DILParser::ParseUnqualifiedId() {
-  Expect(dil::TokenKind::identifier);
-  std::string identifier = m_dil_token.getSpelling();
+  Expect(Token::identifier);
+  std::string identifier = m_dil_token.GetSpelling();
   ConsumeToken();
   return identifier;
 }
@@ -2233,10 +2256,10 @@ std::string DILParser::ParseUnqualifiedId() {
 // Parse a numeric_literal.
 //
 //  numeric_literal:
-//    ? dil::TokenKind::numeric_constant ?
+//    ? Token::numeric_constant ?
 //
 DILASTNodeUP DILParser::ParseNumericLiteral() {
-  Expect(dil::TokenKind::numeric_constant);
+  Expect(Token::numeric_constant);
   DILASTNodeUP numeric_constant = ParseNumericConstant();
   ConsumeToken();
   return numeric_constant;
@@ -2249,9 +2272,9 @@ DILASTNodeUP DILParser::ParseNumericLiteral() {
 //    "false"
 //
 DILASTNodeUP DILParser::ParseBooleanLiteral() {
-  ExpectOneOf(dil::TokenKind::kw_true, dil::TokenKind::kw_false);
-  uint32_t loc = m_dil_token.getLocation();
-  bool literal_value = m_dil_token.is(dil::TokenKind::kw_true);
+  ExpectOneOf(Token::kw_true, Token::kw_false);
+  uint32_t loc = m_dil_token.GetLocation();
+  bool literal_value = m_dil_token.Is(Token::kw_true);
   ConsumeToken();
   Scalar scalar_value(static_cast<int>(literal_value));
   return std::make_unique<ScalarLiteralNode>(
@@ -2259,24 +2282,24 @@ DILASTNodeUP DILParser::ParseBooleanLiteral() {
 }
 
 DILASTNodeUP DILParser::ParseCharLiteral() {
-  ExpectOneOf(dil::TokenKind::char_constant,
-              dil::TokenKind::wide_char_constant,
-              dil::TokenKind::utf8_char_constant);
-  uint32_t loc = m_dil_token.getLocation();
+  ExpectOneOf(Token::char_constant,
+              Token::wide_char_constant,
+              Token::utf8_char_constant);
+  uint32_t loc = m_dil_token.GetLocation();
 
-  std::string token_spelling = m_dil_token.getSpelling();
+  std::string token_spelling = m_dil_token.GetSpelling();
 
   const char* token_begin = token_spelling.c_str();
   dil::CharLiteralParser char_literal(token_begin,
                                       token_begin + token_spelling.size(),
-                                      loc, m_dil_lexer, m_dil_token.getKind());
+                                      loc, m_dil_lexer, m_dil_token.GetKind());
 
   if (char_literal.hadError()) {
     // TODO: Add new ErrorCode kInvalidCharLiteral and use it
     BailOut(ErrorCode::kInvalidNumericLiteral,
             llvm::formatv("Failed to parse token as char-constant: {0}",
                           TokenDescription(m_dil_token)),
-            m_dil_token.getLocation());
+            m_dil_token.GetLocation());
     CompilerType bad_type;
     return std::make_unique<ErrorNode>(bad_type);
   }
@@ -2299,8 +2322,8 @@ DILASTNodeUP DILParser::ParseCharLiteral() {
 //    "nullptr"
 //
 DILASTNodeUP DILParser::ParsePointerLiteral() {
-  Expect(dil::TokenKind::kw_nullptr);
-  uint32_t loc = m_dil_token.getLocation();
+  Expect(Token::kw_nullptr);
+  uint32_t loc = m_dil_token.GetLocation();
   ConsumeToken();
   llvm::APInt raw_value(type_width<uintmax_t>(), 0);
   Scalar scalar_value(raw_value);
@@ -2311,12 +2334,12 @@ DILASTNodeUP DILParser::ParsePointerLiteral() {
 DILASTNodeUP DILParser::ParseNumericConstant() {
   CompilerType bad_type;
   // Parse numeric constant, it can be either integer or float.
-  std::string tok_spelling = m_dil_token.getSpelling();
+  std::string tok_spelling = m_dil_token.GetSpelling();
   llvm::StringRef tok_spelling_ref(tok_spelling);
 
   lldb::TargetSP target_sp = m_ctx_scope->CalculateTarget();
   dil::NumericLiteralParser literal(
-      tok_spelling_ref, m_dil_token.getLocation(), /*AllowHalfType=*/true,
+      tok_spelling_ref, m_dil_token.GetLocation(), /*AllowHalfType=*/true,
       m_dil_lexer,
       /*AllowMicrosoftExt=*/true);
 
@@ -2325,7 +2348,7 @@ DILASTNodeUP DILParser::ParseNumericConstant() {
         ErrorCode::kInvalidNumericLiteral,
         "Failed to parse token as numeric-constant: " +
         TokenDescription(m_dil_token),
-        m_dil_token.getLocation());
+        m_dil_token.GetLocation());
     return std::make_unique<ErrorNode>(bad_type);
   }
 
@@ -2342,13 +2365,13 @@ DILASTNodeUP DILParser::ParseNumericConstant() {
   BailOut(ErrorCode::kInvalidNumericLiteral,
           "numeric-constant should be either float or integer literal: " +
               TokenDescription(m_dil_token),
-          m_dil_token.getLocation());
+          m_dil_token.GetLocation());
   return std::make_unique<ErrorNode>(bad_type);
 }
 
 DILASTNodeUP DILParser::ParseFloatingLiteral(
     dil::NumericLiteralParser& literal,
-    DILToken& token) {
+    Token& token) {
   const llvm::fltSemantics& format = literal.isFloat
                                          ? llvm::APFloat::IEEEsingle()
                                          : llvm::APFloat::IEEEdouble();
@@ -2363,7 +2386,7 @@ DILASTNodeUP DILParser::ParseFloatingLiteral(
     BailOut(ErrorCode::kInvalidNumericLiteral,
             llvm::formatv("float underflow/overflow happened: {0}",
                           TokenDescription(token)),
-            token.getLocation());
+            token.GetLocation());
     CompilerType bad_type;
     return std::make_unique<ErrorNode>(bad_type);
   }
@@ -2372,11 +2395,11 @@ DILASTNodeUP DILParser::ParseFloatingLiteral(
       literal.isFloat ? lldb::eBasicTypeFloat : lldb::eBasicTypeDouble;
   Scalar scalar_value(raw_value);
   return std::make_unique<ScalarLiteralNode>(
-      token.getLocation(), GetBasicType(m_ctx_scope, basic_type), scalar_value);
+      token.GetLocation(), GetBasicType(m_ctx_scope, basic_type), scalar_value);
 }
 
 DILASTNodeUP DILParser::ParseIntegerLiteral(dil::NumericLiteralParser& literal,
-                                            DILToken& token) {
+                                            Token& token) {
   // Create a value big enough to fit all valid numbers.
   llvm::APInt raw_value(type_width<uintmax_t>(), 0);
 
@@ -2385,7 +2408,7 @@ DILASTNodeUP DILParser::ParseIntegerLiteral(dil::NumericLiteralParser& literal,
             llvm::formatv("integer literal is too large to be represented in "
                           "any integer type: {0}",
                           TokenDescription(token)),
-            token.getLocation());
+            token.GetLocation());
     CompilerType bad_type;
     return std::make_unique<ErrorNode>(bad_type);
   }
@@ -2393,7 +2416,7 @@ DILASTNodeUP DILParser::ParseIntegerLiteral(dil::NumericLiteralParser& literal,
   auto [type, is_unsigned] = PickIntegerType(m_ctx_scope, literal, raw_value);
 
   Scalar scalar_value(raw_value);
-  return std::make_unique<ScalarLiteralNode>(token.getLocation(),
+  return std::make_unique<ScalarLiteralNode>(token.GetLocation(),
                                              GetBasicType(m_ctx_scope, type),
                                              scalar_value);
 }
@@ -2415,13 +2438,13 @@ DILASTNodeUP DILParser::ParseIntegerLiteral(dil::NumericLiteralParser& literal,
 //
 DILASTNodeUP DILParser::ParseBuiltinFunction(
     uint32_t loc, std::unique_ptr<BuiltinFunctionDef> func_def) {
-  Expect(dil::TokenKind::l_paren);
+  Expect(Token::l_paren);
   ConsumeToken();
 
   std::vector<DILASTNodeUP> arguments;
   CompilerType bad_type;
 
-  if (m_dil_token.is(dil::TokenKind::r_paren)) {
+  if (m_dil_token.Is(Token::r_paren)) {
     // Empty argument list, nothing to do here.
     ConsumeToken();
   } else {
@@ -2441,9 +2464,9 @@ DILASTNodeUP DILParser::ParseBuiltinFunction(
 
       arguments.push_back(std::move(argument));
 
-    } while (m_dil_token.is(dil::TokenKind::comma));
+    } while (m_dil_token.Is(Token::comma));
 
-    Expect(dil::TokenKind::r_paren);
+    Expect(Token::r_paren);
     ConsumeToken();
   }
 
@@ -2592,22 +2615,22 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
   return std::make_unique<CStyleCastNode>(location, type, std::move(rhs), promo_kind);
 }
 
-DILASTNodeUP DILParser::BuildCxxCast(dil::TokenKind kind, CompilerType type,
+DILASTNodeUP DILParser::BuildCxxCast(Token::Kind kind, CompilerType type,
                                    DILASTNodeUP rhs,
                                    uint32_t location) {
-  assert((kind == dil::TokenKind::kw_static_cast ||
-          kind == dil::TokenKind::kw_dynamic_cast ||
-          kind == dil::TokenKind::kw_reinterpret_cast) &&
+  assert((kind == Token::kw_static_cast ||
+          kind == Token::kw_dynamic_cast ||
+          kind == Token::kw_reinterpret_cast) &&
          "invalid C++-style cast type");
 
   // TODO: Implement custom builders for all C++-style casts.
-  if (kind == dil::TokenKind::kw_dynamic_cast) {
+  if (kind == Token::kw_dynamic_cast) {
     return BuildCxxDynamicCast(type, std::move(rhs), location);
   }
-  if (kind == dil::TokenKind::kw_reinterpret_cast) {
+  if (kind == Token::kw_reinterpret_cast) {
     return BuildCxxReinterpretCast(type, std::move(rhs), location);
   }
-  if (kind == dil::TokenKind::kw_static_cast) {
+  if (kind == Token::kw_static_cast) {
     return BuildCxxStaticCast(type, std::move(rhs), location);
   }
   return BuildCStyleCast(type, std::move(rhs), location);
@@ -3573,26 +3596,26 @@ DILASTNodeUP DILParser::BuildMemberOf(DILASTNodeUP lhs, std::string member_id,
                                         member.val_obj_sp);
 }
 
-void DILParser::Expect(dil::TokenKind kind) {
-  if (m_dil_token.isNot(kind)) {
+void DILParser::Expect(Token::Kind kind) {
+  if (m_dil_token.IsNot(kind)) {
     BailOut(ErrorCode::kUnknown,
             llvm::formatv("expected {0}, got: {1}", TokenKindsJoin(kind),
                           TokenDescription(m_dil_token)),
-            m_dil_token.getLocation());
+            m_dil_token.GetLocation());
   }
 }
 
 template <typename... Ts>
-void DILParser::ExpectOneOf(dil::TokenKind k, Ts... ks) {
-  static_assert((std::is_same_v<Ts, dil::TokenKind> && ...),
+    void DILParser::ExpectOneOf(Token::Kind k, Ts... ks) {
+  static_assert((std::is_same_v<Ts, Token::Kind> && ...),
                 "ExpectOneOf can be only called with values of type "
-                "dil::TokenKind");
+                "Kind");
 
-  if (!m_dil_token.isOneOf(k, ks...)) {
+  if (!m_dil_token.IsOneOf(k, ks...)) {
     BailOut(ErrorCode::kUnknown,
             llvm::formatv("expected any of ({0}), got: {1}",
                           TokenKindsJoin(k, ks...), TokenDescription(m_dil_token)),
-            m_dil_token.getLocation());
+            m_dil_token.GetLocation());
   }
 }
 
@@ -4010,8 +4033,8 @@ void DILParser::BailOut(ErrorCode code, const std::string& error,
   }
 
   m_error = Status((uint32_t) code, lldb::eErrorTypeGeneric,
-                   FormatDiagnostics(*m_sm, error, loc));
-  m_dil_token.setKind(dil::TokenKind::eof);
+                   FormatDiagnostics(m_input_expr, error, loc));
+  m_dil_token = Token(Token::eof, "", 0);
 }
 
 void DILParser::BailOut(Status error) {
@@ -4021,63 +4044,23 @@ void DILParser::BailOut(Status error) {
     return;
   }
   m_error = std::move(error);
-  m_dil_token.setKind(dil::TokenKind::eof);
+  m_dil_token = Token(Token::eof, "", 0);
 }
 
 void DILParser::ConsumeToken() {
-  if (m_dil_token.is(dil::TokenKind::eof)) {
+  if (m_dil_token.Is(Token::eof)) {
     // Don't do anything if we're already at eof. This can happen if an error
     // occurred during parsing and we're trying to bail out.
     return;
   }
-  bool all_ok;
-  m_dil_lexer.Lex(m_dil_token);
-  if (m_dil_lexer.GetCurrentTokenIdx() == UINT_MAX)
-    all_ok = m_dil_lexer.ResetTokenIdx(0);
-  else
-    all_ok = m_dil_lexer.IncrementTokenIdx();
-  if (!all_ok)
-    BailOut(ErrorCode::kUnknown, "Invalid lexer token index", 0);
+  m_dil_lexer.Advance();
+  m_dil_token = m_dil_lexer.GetCurrentToken();
 }
 
-std::string DILParser::TokenDescription(const DILToken& token) {
-  const auto& spelling = ((DILToken)token).getSpelling();
-  const std::string kind_name = DILToken::getTokenName(((DILToken)token).getKind());
-  return llvm::formatv("<'{0}' ({1})>", spelling, kind_name);
-}
-
-std::string DILParser::FormatDiagnostics(
-    DILSourceManager& sm,
-    const std::string& message,
-    uint32_t loc) {
-  return message; // CAROLINE!!  TODO: Fix this?
-
-  // Get the source buffer and the location of the current token.
-  llvm::StringRef text = sm.GetSource();
-  size_t loc_offset = (size_t) loc;
-
-  // Look for the start of the line.
-  size_t line_start = text.rfind('\n', loc_offset);
-  line_start = line_start == llvm::StringRef::npos ? 0 : line_start + 1;
-
-  // Look for the end of the line.
-  size_t line_end = text.find('\n', loc_offset);
-  line_end = line_end == llvm::StringRef::npos ? text.size() : line_end;
-
-  // Get a view of the current line in the source code and the position of the
-  // diagnostics pointer.
-  llvm::StringRef line = text.slice(line_start, line_end);
-  int32_t arrow = loc;
-
-  // Calculate the padding in case we point outside of the expression (this can
-  // happen if the parser expected something, but got EOF).˚
-  size_t expr_rpad = std::max(0, arrow - static_cast<int32_t>(line.size()));
-  size_t arrow_rpad = std::max(0, static_cast<int32_t>(line.size()) - arrow);
-
-  //return llvm::formatv("<expr:1:{0}>: {1}\n{2}\n{3}", loc,
-  return llvm::formatv("{0}: {1}\n{2}\n{3}", loc,
-                       message, llvm::fmt_pad(line, 0, expr_rpad),
-                       llvm::fmt_pad("^", arrow - 1, arrow_rpad));
+std::string DILParser::TokenDescription(const Token& token) {
+  const auto& spelling = ((Token)token).GetSpelling();
+  llvm::StringRef kind_name = Token::GetTokenName(((Token)token).GetKind());;
+  return llvm::formatv("<'{0}' ({1})>", spelling, kind_name.str());
 }
 
 bool DILParser::ImplicitConversionIsAllowed(CompilerType src, CompilerType dst,
@@ -4190,6 +4173,4 @@ lldb::BasicType TypeDeclaration::GetBasicType() const {
   return lldb::eBasicTypeInvalid;
 }
 
-}  // namespace dil
-
-}  // namespace lldb_private
+}  // namespace lldb_private::dil

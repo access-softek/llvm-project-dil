@@ -17,9 +17,7 @@
 #include "llvm/Support/FormatAdapters.h"
 #include "llvm/Support/FormatVariadic.h"
 
-namespace lldb_private {
-
-namespace dil {
+namespace lldb_private::dil {
 
 template <typename T>
 bool Compare(BinaryOpKind kind, const T& l, const T& r) {
@@ -237,46 +235,6 @@ lldb::ValueObjectSP DILInterpreter::EvaluateMemberOf(lldb::ValueObjectSP value,
   return member_val_sp;
 }
 
-static std::string FormatDiagnostics(std::shared_ptr<DILSourceManager> sm,
-                                     const std::string& message,
-                                     uint32_t loc,
-                                     ErrorCode code)
-{
-  const char *ecode_names[7] = {
-    "kOK", "kInvalidExpressionSyntax", "kInvalidNumericLiteral",
-    "kInvalidOperandType", "kUndeclaredIdentifier", "kNotImplemented",
-    "kUnknown"};
-
-  // Translate ErrorCode
-  llvm::StringRef error_code = ecode_names[(int)code];
-
-  // Get the source buffer and the location of the current token.
-  llvm::StringRef text(sm->GetSource());
-  size_t loc_offset = (size_t) loc;
-
-  // Look for the start of the line.
-  size_t line_start = text.rfind('\n', loc_offset);
-  line_start = line_start == llvm::StringRef::npos ? 0 : line_start + 1;
-
-  // Look for the end of the line.
-  size_t line_end = text.find('\n', loc_offset);
-  line_end = line_end == llvm::StringRef::npos ? text.size() : line_end;
-
-  // Get a view of the current line in the source code and the position of the
-  // diagnostics pointer.
-  llvm::StringRef line = text.slice(line_start, line_end);
-  int32_t arrow = loc;
-
-  // Calculate the padding in case we point outside of the expression (this can
-  // happen if the parser expected something, but got EOF).
-  size_t expr_rpad = std::max(0, arrow - static_cast<int32_t>(line.size()));
-  size_t arrow_rpad = std::max(0, static_cast<int32_t>(line.size()) - arrow);
-
-  return llvm::formatv("{0}: {1}\n{2}\n{3}", error_code, message,
-                       llvm::fmt_pad(line, 0, expr_rpad),
-                       llvm::fmt_pad("^", arrow - 1, arrow_rpad));
-}
-
 void SetUbStatus(Status& error, ErrorCode code) {
   llvm::StringRef err_str;
   switch ((int) code) {
@@ -310,22 +268,22 @@ void SetUbStatus(Status& error, ErrorCode code) {
 }
 
 DILInterpreter::DILInterpreter(lldb::TargetSP target,
-                               std::shared_ptr<DILSourceManager> sm)
-    : m_target(std::move(target)), m_sm(std::move(sm))
+                               llvm::StringRef expr)
+    : m_target(std::move(target)), m_expr(expr)
 {
   m_default_dynamic = lldb::eNoDynamicValues;
 }
 
 DILInterpreter::DILInterpreter(lldb::TargetSP target,
-                               std::shared_ptr<DILSourceManager> sm,
+                               llvm::StringRef expr,
                                lldb::DynamicValueType use_dynamic)
-    : m_target(std::move(target)), m_sm(std::move(sm)),
+    : m_target(std::move(target)), m_expr(expr),
       m_default_dynamic(use_dynamic) {}
 
 DILInterpreter::DILInterpreter(lldb::TargetSP target,
-                               std::shared_ptr<DILSourceManager> sm,
+                               llvm::StringRef expr,
                                lldb::ValueObjectSP scope)
-    : m_target(std::move(target)), m_sm(std::move(sm)),
+    : m_target(std::move(target)), m_expr(expr),
       m_scope(std::move(scope))
 {
   m_default_dynamic = lldb::eNoDynamicValues;
@@ -372,7 +330,7 @@ lldb::ValueObjectSP DILInterpreter::DILEvalNode(const DILASTNode* node,
 void DILInterpreter::SetError(ErrorCode code, std::string error,
                               uint32_t loc) {
   assert(m_error.Success() && "interpreter can error only once");
-  m_error = Status(FormatDiagnostics(m_sm, error, loc, code));
+  m_error = Status(FormatDiagnostics(m_expr, error, loc));
 }
 
 void DILInterpreter::Visit(const ErrorNode* node) {
@@ -1916,6 +1874,4 @@ lldb::ValueObjectSP DILInterpreter::ResolveContextVar(
   return it != m_context_vars.end() ? it->second : lldb::ValueObjectSP();
 }
 
-}  // namespace dil
-
-}  // namespace lldb_private
+}  // namespace lldb_private::dil

@@ -19,9 +19,7 @@
 
 #include <vector>
 
-namespace lldb_private {
-
-namespace dil {
+namespace lldb_private::dil {
 
 lldb::ValueObjectSP
 GetDynamicOrSyntheticValue(lldb::ValueObjectSP in_valobj_sp,
@@ -59,66 +57,65 @@ GetDynamicOrSyntheticValue(lldb::ValueObjectSP in_valobj_sp,
   return value_sp;
 }
 
-BinaryOpKind
-dil_token_kind_to_binary_op_kind(dil::TokenKind token_kind) {
+BinaryOpKind dil_token_kind_to_binary_op_kind(Token::Kind token_kind) {
   switch (token_kind) {
-  case dil::TokenKind::star:
+  case Token::star:
     return BinaryOpKind::Mul;
-  case dil::TokenKind::amp:
+  case Token::amp:
     return BinaryOpKind::And;
-  case dil::TokenKind::minus:
+  case Token::minus:
     return BinaryOpKind::Sub;
-  case dil::TokenKind::slash:
+  case Token::slash:
     return BinaryOpKind::Div;
-  case dil::TokenKind::percent:
+  case Token::percent:
     return BinaryOpKind::Rem;
-  case dil::TokenKind::plus:
+  case Token::plus:
     return BinaryOpKind::Add;
-  case dil::TokenKind::lessless:
+  case Token::lessless:
     return BinaryOpKind::Shl;
-  case dil::TokenKind::greatergreater:
+  case Token::greatergreater:
     return BinaryOpKind::Shr;
-  case dil::TokenKind::less:
+  case Token::less:
     return BinaryOpKind::LT;
-  case dil::TokenKind::greater:
+  case Token::greater:
     return BinaryOpKind::GT;
-  case dil::TokenKind::lessequal:
+  case Token::lessequal:
     return BinaryOpKind::LE;
-  case dil::TokenKind::greaterequal:
+  case Token::greaterequal:
     return BinaryOpKind::GE;
-  case dil::TokenKind::equalequal:
+  case Token::equalequal:
     return BinaryOpKind::EQ;
-  case dil::TokenKind::exclaimequal:
+  case Token::exclaimequal:
     return BinaryOpKind::NE;
-  case dil::TokenKind::caret:
+  case Token::caret:
     return BinaryOpKind::Xor;
-  case dil::TokenKind::pipe:
+  case Token::pipe:
     return BinaryOpKind::Or;
-  case dil::TokenKind::ampamp:
+  case Token::ampamp:
     return BinaryOpKind::LAnd;
-  case dil::TokenKind::pipepipe:
+  case Token::pipepipe:
     return BinaryOpKind::LOr;
-  case dil::TokenKind::equal:
+  case Token::equal:
     return BinaryOpKind::Assign;
-  case dil::TokenKind::starequal:
+  case Token::starequal:
     return BinaryOpKind::MulAssign;
-  case dil::TokenKind::slashequal:
+  case Token::slashequal:
     return BinaryOpKind::DivAssign;
-  case dil::TokenKind::percentequal:
+  case Token::percentequal:
     return BinaryOpKind::RemAssign;
-  case dil::TokenKind::plusequal:
+  case Token::plusequal:
     return BinaryOpKind::AddAssign;
-  case dil::TokenKind::minusequal:
+  case Token::minusequal:
     return BinaryOpKind::SubAssign;
-  case dil::TokenKind::lesslessequal:
+  case Token::lesslessequal:
     return BinaryOpKind::ShlAssign;
-  case dil::TokenKind::greatergreaterequal:
+  case Token::greatergreaterequal:
     return BinaryOpKind::ShrAssign;
-  case dil::TokenKind::ampequal:
+  case Token::ampequal:
     return BinaryOpKind::AndAssign;
-  case dil::TokenKind::caretequal:
+  case Token::caretequal:
     return BinaryOpKind::XorAssign;
-  case dil::TokenKind::pipeequal:
+  case Token::pipeequal:
     return BinaryOpKind::OrAssign;
   default:
     break;
@@ -635,6 +632,4 @@ void UnaryOpNode::Accept(Visitor *v) const { v->Visit(this); }
 
 void TernaryOpNode::Accept(Visitor *v) const { v->Visit(this); }
 
-}  // namespace dil
-
-}  // namespace lldb_private
+}  // namespace lldb_private::dil

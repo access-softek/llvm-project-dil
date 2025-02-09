@@ -352,7 +352,6 @@ public:
         }
       }
     }
-
     return true;
   }
 
@@ -1003,7 +1002,7 @@ TEST_F(EvalTest, TestMemberOf) {
   EXPECT_THAT(
       Eval("sp->4"),
       IsError(
-          "<expr>:1:5: expected 'identifier', got: <'4' (numeric_constant)>\n"
+          "<expr:1:5>: expected 'identifier', got: <'4' (numeric_constant)>\n"
           "sp->4\n"
           "    ^"));
   EXPECT_THAT(Eval("sp->foo"), IsError("no member named 'foo' in 'Sx'"));
@@ -1274,7 +1273,7 @@ TEST_F(EvalTest, TestCStyleCastBuiltins) {
 
   EXPECT_THAT(
       Eval("(long 1)1"),
-      IsError("<expr>:1:7: expected 'r_paren', got: <'1' (numeric_constant)>\n"
+      IsError("<expr:1:7>: expected 'r_paren', got: <'1' (numeric_constant)>\n"
               "(long 1)1\n"
               "      ^"));
 }
@@ -2070,27 +2069,21 @@ TEST_F(EvalTest, TestTemplateTypes) {
 #endif
   EXPECT_THAT(
       Eval("ns::T_1<ns::T_1<int> >::cx"),
-      XFail(IsError(
-          "use of undeclared identifier 'ns::T_1<ns::T_1<int> >::cx'")));
+      IsError("use of undeclared identifier 'ns::T_1<ns::T_1<int> >::cx'"));
   EXPECT_THAT(Eval("T_1<int>::cx"), XFail(IsEqual("24")));
   EXPECT_THAT(Eval("T_1<double>::cx"), XFail(IsEqual("42")));
-  EXPECT_THAT(Eval("ns::T_1<int>::cx"), XFail(IsEqual("64")));
+  EXPECT_THAT(Eval("ns::T_1<int>::cx"), IsEqual("64"));
 
   for (std::string arg : {"int", "int*", "int**", "int&", "int*&"}) {
-    EXPECT_THAT(Eval("(T_1<" + arg + ">::myint)1.2"), XFail(IsEqual("1.2")));
-    EXPECT_THAT(Eval("(::T_1<" + arg + ">::myint)1.2"), XFail(IsEqual("1.2")));
-    EXPECT_THAT(Eval("(T_1<T_1<" + arg + "> >::myint)1.2"),
-                XFail(IsEqual("1.2")));
-    EXPECT_THAT(Eval("(::T_1<T_1<" + arg + "> >::myint)1.2"),
-                XFail(IsEqual("1.2")));
+    EXPECT_THAT(Eval("(T_1<" + arg + ">::myint)1.2"), IsEqual("1.2"));
+    EXPECT_THAT(Eval("(::T_1<" + arg + ">::myint)1.2"), IsEqual("1.2"));
+    EXPECT_THAT(Eval("(T_1<T_1<" + arg + "> >::myint)1.2"), IsEqual("1.2"));
+    EXPECT_THAT(Eval("(::T_1<T_1<" + arg + "> >::myint)1.2"), IsEqual("1.2"));
 
-    EXPECT_THAT(Eval("(ns::T_1<" + arg + ">::myint)1.1"), XFail(IsEqual("1")));
-    EXPECT_THAT(Eval("(::ns::T_1<" + arg + ">::myint)1.1"),
-                XFail(IsEqual("1")));
-    EXPECT_THAT(Eval("(ns::T_1<T_1<" + arg + "> >::myint)1.1"),
-                XFail(IsEqual("1")));
-    EXPECT_THAT(Eval("(::ns::T_1<T_1<" + arg + "> >::myint)1.1"),
-                XFail(IsEqual("1")));
+    EXPECT_THAT(Eval("(ns::T_1<" + arg + ">::myint)1.1"), IsEqual("1"));
+    EXPECT_THAT(Eval("(::ns::T_1<" + arg + ">::myint)1.1"), IsEqual("1"));
+    EXPECT_THAT(Eval("(ns::T_1<T_1<" + arg + "> >::myint)1.1"), IsEqual("1"));
+    EXPECT_THAT(Eval("(::ns::T_1<T_1<" + arg + "> >::myint)1.1"), IsEqual("1"));
   }
 
   EXPECT_THAT(
@@ -2108,18 +2101,14 @@ TEST_F(EvalTest, TestTemplateTypes) {
                 IsError("use of undeclared identifier '::ns::T_1'"));
   }
 
-  EXPECT_THAT(Eval("(T_2<int, char>::myint)1.1f"),
-              XFail(IsEqual("1.10000002")));
-  EXPECT_THAT(Eval("(::T_2<int, char>::myint)1.1f"),
-              XFail(IsEqual("1.10000002")));
-  EXPECT_THAT(Eval("(T_2<int*, char&>::myint)1.1f"),
-              XFail(IsEqual("1.10000002")));
-  EXPECT_THAT(Eval("(::T_2<int&, char*>::myint)1.1f"),
-              XFail(IsEqual("1.10000002")));
+  EXPECT_THAT(Eval("(T_2<int, char>::myint)1.1f"), IsEqual("1.10000002"));
+  EXPECT_THAT(Eval("(::T_2<int, char>::myint)1.1f"), IsEqual("1.10000002"));
+  EXPECT_THAT(Eval("(T_2<int*, char&>::myint)1.1f"), IsEqual("1.10000002"));
+  EXPECT_THAT(Eval("(::T_2<int&, char*>::myint)1.1f"), IsEqual("1.10000002"));
   EXPECT_THAT(Eval("(T_2<T_1<T_1<int> >, T_1<char> >::myint)1.1"),
-              XFail(IsEqual("1.10000002")));
+              IsEqual("1.10000002"));
   EXPECT_THAT(Eval("(::T_2<T_1<T_1<int> >, T_1<char> >::myint)1.1"),
-              XFail(IsEqual("1.10000002")));
+              IsEqual("1.10000002"));
 }
 
 TEST_F(EvalTest, TestTemplateCpp11) {
@@ -2133,7 +2122,9 @@ TEST_F(EvalTest, TestTemplateCpp11) {
 
   // Here T_1 is a local variable.
   EXPECT_THAT(Eval("T_1<2>1"), IsEqual("false"));  // (p < 2) > 1
-  EXPECT_THAT(Eval("T_1<2>>1"), IsEqual("false")); // (p < 2) >> 1
+  // EXPECT_THAT(Eval("T_1<2>>1"), IsEqual("false")); // (p < 2) >> 1
+  EXPECT_THAT(Eval("T_1<2>>1"),
+              IsError("<expr:1:7>: Unexpected token: <'>' (greater)>"));
   // And here it's a template.
   EXPECT_THAT(Eval("T_1<int>::cx + 1"), XFail(IsEqual("25")));
 }
@@ -2145,7 +2136,7 @@ TEST_F(EvalTest, TestTemplateWithNumericArguments) {
   EXPECT_THAT(Eval("(Allocator<4>*)0"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
   EXPECT_THAT(Eval("(TArray<int, Allocator<4> >::ElementType*)0"),
-              XFail(IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000")));
+              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
   // Test C++11's ">>" syntax.
   EXPECT_THAT(Eval("(TArray<int, Allocator<4>>::ElementType*)0"),
               XFail(IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000")));

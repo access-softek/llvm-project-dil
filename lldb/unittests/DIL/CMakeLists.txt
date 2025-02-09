@@ -1,10 +1,12 @@
 add_lldb_unittest(DILTests
   DILTests.cpp
+  DILLexerTests.cpp
   Runner.cpp
 
   LINK_LIBS
     liblldb
     lldbUtilityHelpers
+    lldbValueObject
     LLVMTestingSupport
   )
 add_subdirectory(Inputs)

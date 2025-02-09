@@ -57,6 +57,8 @@ llvm::StringRef Token::GetTokenName(Kind kind) {
     case Token::coloncolon: return "coloncolon";
     case Token::comma: return "comma";
     case Token::eof: return "eof";
+    case Token::equal:
+      return "equal";
     case Token::equalequal: return "equalequal";
     case Token::exclaim: return "exclaim";
     case Token::exclaimequal: return "exclaimequal";
@@ -67,6 +69,54 @@ llvm::StringRef Token::GetTokenName(Kind kind) {
     case Token::greatergreaterequal: return "greatergreaterequal";
     case Token::identifier: return "identifier";
     case Token::integer: return "integer";
+    case Token::kw_bool:
+      return "bool";
+    case Token::kw_char:
+      return "char";
+    case Token::kw_char16_t:
+      return "char16_t";
+    case Token::kw_char32_t:
+      return "char32_t";
+    case Token::kw_const:
+      return "const";
+    case Token::kw_double:
+      return "double";
+    case Token::kw_dynamic_cast:
+      return "dynamic_cast";
+    case Token::kw_false:
+      return "false";
+    case Token::kw_float:
+      return "float";
+    case Token::kw_int:
+      return "int";
+    case Token::kw_long:
+      return "long";
+    case Token::kw_namespace:
+      return "namespace";
+    case Token::kw_nullptr:
+      return "nullptr";
+    case Token::kw_reinterpret_cast:
+      return "reinterpret_cast";
+    case Token::kw_short:
+      return "short";
+    case Token::kw_signed:
+      return "signed";
+    case Token::kw_sizeof:
+      return "sizeof";
+    case Token::kw_static_cast:
+      return "static_cast";
+    case Token::kw_this:
+      return "this";
+    case Token::kw_true:
+      return "true";
+    case Token::kw_unsigned:
+      return "unsigned";
+    case Token::kw_void:
+      return "void";
+    case Token::kw_volatile:
+      return "volatile";
+    case Token::kw_wchar_t:
+      return "wchar_t";
     case Token::less: return "less";
     case Token::lessequal: return "lessequal";
     case Token::lessless: return "lessless";

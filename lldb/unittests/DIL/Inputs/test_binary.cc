@@ -727,7 +727,15 @@ static void TestTemplateTypes() {
   { T_2<T_1<T_1<int>>, T_1<char>> _; }
 
   { ns::T_1<int> _; }
+  { ns::T_1<int *> _; }
+  { ns::T_1<int **> _; }
+  { ns::T_1<int &> _(i); }
+  { ns::T_1<int *&> _(p); }
   { ns::T_1<ns::T_1<int>> _; }
+  { ns::T_1<ns::T_1<int *>> _; }
+  { ns::T_1<ns::T_1<int **>> _; }
+  { ns::T_1<ns::T_1<int &>> _(i); }
+  { ns::T_1<ns::T_1<int *&>> _(p); }
 
   { T_1<int>::myint _ = 0; }
   { T_1<int *>::myint _ = 0; }

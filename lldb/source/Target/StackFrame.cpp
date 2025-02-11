@@ -32,6 +32,7 @@
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegisterValue.h"
 #include "lldb/ValueObject/DILEval.h"
+#include "lldb/ValueObject/DILLexer.h"
 #include "lldb/ValueObject/DILParser.h"
 #include "lldb/ValueObject/ValueObjectConstResult.h"
 #include "lldb/ValueObject/ValueObjectMemory.h"
@@ -530,7 +531,6 @@ ValueObjectSP StackFrame::DILGetValueForVariableExpressionPath(
       uint32_t options, lldb::VariableSP &var_sp, Status &error)
 {
   ValueObjectSP ret_val;
-  auto source = dil::DILSourceManager::Create(var_expr.data());
 
   const bool check_ptr_vs_member =
       (options & eExpressionPathOptionCheckPtrVsMember) != 0;
@@ -539,9 +539,17 @@ ValueObjectSP StackFrame::DILGetValueForVariableExpressionPath(
   const bool no_synth_child =
       (options & eExpressionPathOptionsNoSyntheticChildren) != 0;
 
+  // Lex the expression
+  auto lex_or_err = dil::DILLexer::Create(var_expr);
+  if (!lex_or_err) {
+    error = Status::FromError(lex_or_err.takeError());
+    return ValueObjectSP();
+  }
+  dil::DILLexer lexer = *lex_or_err;
+
   // Parse the expression.
   Status parse_error, eval_error;
-  dil::DILParser parser(source, shared_from_this(), use_dynamic,
+  dil::DILParser parser(var_expr, lexer, shared_from_this(), use_dynamic,
                         !no_synth_child, !no_fragile_ivar, check_ptr_vs_member);
   dil::DILASTNodeUP tree = parser.Run(parse_error);
   if (parse_error.Fail()) {
@@ -551,7 +559,7 @@ ValueObjectSP StackFrame::DILGetValueForVariableExpressionPath(
 
   // Evaluate the parsed expression.
   lldb::TargetSP target = this->CalculateTarget();
-  dil::DILInterpreter interpreter(target, source, use_dynamic);
+  dil::DILInterpreter interpreter(target, var_expr, use_dynamic);
 
   ret_val = interpreter.DILEval(tree.get(), target, eval_error);
   if (eval_error.Fail()) {

@@ -17,9 +17,7 @@
 #include "llvm/Support/FormatAdapters.h"
 #include "llvm/Support/FormatVariadic.h"
 
-namespace lldb_private {
-
-namespace dil {
+namespace lldb_private::dil {
 
 template <typename T>
 bool Compare(BinaryOpKind kind, const T& l, const T& r) {
@@ -270,22 +268,22 @@ void SetUbStatus(Status& error, ErrorCode code) {
 }
 
 DILInterpreter::DILInterpreter(lldb::TargetSP target,
-                               std::shared_ptr<DILSourceManager> sm)
-    : m_target(std::move(target)), m_sm(std::move(sm))
+                               llvm::StringRef expr)
+    : m_target(std::move(target)), m_expr(expr)
 {
   m_default_dynamic = lldb::eNoDynamicValues;
 }
 
 DILInterpreter::DILInterpreter(lldb::TargetSP target,
-                               std::shared_ptr<DILSourceManager> sm,
+                               llvm::StringRef expr,
                                lldb::DynamicValueType use_dynamic)
-    : m_target(std::move(target)), m_sm(std::move(sm)),
+    : m_target(std::move(target)), m_expr(expr),
       m_default_dynamic(use_dynamic) {}
 
 DILInterpreter::DILInterpreter(lldb::TargetSP target,
-                               std::shared_ptr<DILSourceManager> sm,
+                               llvm::StringRef expr,
                                lldb::ValueObjectSP scope)
-    : m_target(std::move(target)), m_sm(std::move(sm)),
+    : m_target(std::move(target)), m_expr(expr),
       m_scope(std::move(scope))
 {
   m_default_dynamic = lldb::eNoDynamicValues;
@@ -332,8 +330,7 @@ lldb::ValueObjectSP DILInterpreter::DILEvalNode(const DILASTNode* node,
 void DILInterpreter::SetError(ErrorCode code, std::string error,
                               uint32_t loc) {
   assert(m_error.Success() && "interpreter can error only once");
-  m_error = Status((uint32_t)code, lldb::eErrorTypeGeneric,
-                   FormatDiagnostics(*m_sm, error, loc));
+  m_error = Status(FormatDiagnostics(m_expr, error, loc));
 }
 
 void DILInterpreter::Visit(const ErrorNode* node) {
@@ -1877,6 +1874,4 @@ lldb::ValueObjectSP DILInterpreter::ResolveContextVar(
   return it != m_context_vars.end() ? it->second : lldb::ValueObjectSP();
 }
 
-}  // namespace dil
-
-}  // namespace lldb_private
+}  // namespace lldb_private::dil

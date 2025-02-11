@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLDB_VALUEOBJECT_DILEVAL_H_
-#define LLDB_VALUEOBJECT_DILEVAL_H_
+#ifndef LLDB_VALUEOBJECT_DILEVAL_H
+#define LLDB_VALUEOBJECT_DILEVAL_H
 
 #include <memory>
 #include <vector>
@@ -15,9 +15,7 @@
 #include "lldb/ValueObject/DILAST.h"
 #include "lldb/ValueObject/DILParser.h"
 
-namespace lldb_private {
-
-namespace dil {
+namespace lldb_private::dil {
 
 class FlowAnalysis {
  public:
@@ -33,13 +31,10 @@ class FlowAnalysis {
 
 class DILInterpreter : Visitor {
  public:
-  DILInterpreter(lldb::TargetSP target,
-                 std::shared_ptr<DILSourceManager> sm);
-  DILInterpreter(lldb::TargetSP target,
-                 std::shared_ptr<DILSourceManager> sm,
+  DILInterpreter(lldb::TargetSP target, llvm::StringRef expr);
+  DILInterpreter(lldb::TargetSP target, llvm::StringRef expr,
                  lldb::ValueObjectSP scope);
-  DILInterpreter(lldb::TargetSP target,
-                 std::shared_ptr<DILSourceManager> sm,
+  DILInterpreter(lldb::TargetSP target, llvm::StringRef expr,
                  lldb::DynamicValueType use_dynamic);
 
   lldb::ValueObjectSP DILEval(const DILASTNode* tree, lldb::TargetSP target_sp,
@@ -139,7 +134,7 @@ class DILInterpreter : Visitor {
   // Used by the interpreter to create objects, perform casts, etc.
   lldb::TargetSP m_target;
 
-  std::shared_ptr<DILSourceManager> m_sm;
+  llvm::StringRef m_expr;
 
   // Flow analysis chain represents the expression evaluation flow for the
   // current code branch. Each node in the chain corresponds to an AST node,
@@ -162,8 +157,6 @@ class DILInterpreter : Visitor {
   Status m_error;
 };
 
-}  // namespace dil
+}  // namespace lldb_private::dil
 
-}  // namespace lldb_private
-
-#endif  // LLDB_VALUEOBJECT_DILEVAL_H_
+#endif  // LLDB_VALUEOBJECT_DILEVAL_H

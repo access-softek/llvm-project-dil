@@ -28,9 +28,7 @@
 #include <iterator>
 #include <string>
 
-namespace lldb_private {
-
-namespace dil {
+namespace lldb_private::dil {
 
 enum class diag {
   // errs
@@ -88,16 +86,16 @@ static void Diags_Report(uint32_t loc, dil::diag diag_id, std::string diag_msg)
 }
 
 
-static unsigned getCharWidth(dil::TokenKind kind) {
+static unsigned getCharWidth(Token::Kind kind) {
   switch (kind) {
   default: llvm_unreachable("Unknown token type!");
-  case dil::TokenKind::char_constant:
-  case dil::TokenKind::string_literal:
-  case dil::TokenKind::utf8_char_constant:
-  case dil::TokenKind::utf8_string_literal:
+  case Token::char_constant:
+  case Token::string_literal:
+  case Token::utf8_char_constant:
+  case Token::utf8_string_literal:
     return 8;
-  case dil::TokenKind::wide_char_constant:
-  case dil::TokenKind::wide_string_literal:
+  case Token::wide_char_constant:
+  case Token::wide_string_literal:
     return 16;
   }
 }
@@ -206,19 +204,6 @@ NumericLiteralParser::NumericLiteralParser(llvm::StringRef TokSpelling,
         break;
       HasSize = true;
 
-      // CUDA host and device may have different _Float16 support, therefore
-      // allows f16 literals to avoid false alarm.
-      // When we compile for OpenMP target offloading on NVPTX, f16 suffix
-      // should also be supported.
-      // ToDo: more precise check for CUDA.
-      // TODO: AMDGPU might also support it in the future.
-      //if ((lexer.getTargetInfo().hasFloat16Type() ||
-      //         lexer.getTargetInfo().getTriple().isNVPTX()) &&
-      //    s + 2 < ThisTokEnd && s[1] == '1' && s[2] == '6') {
-      //  s += 2; // success, eat up 2 characters.
-      //  isFloat16 = true;
-      //  continue;
-      //}
 
       isFloat = true;
       continue;  // Success.
@@ -365,8 +350,6 @@ NumericLiteralParser::NumericLiteralParser(llvm::StringRef TokSpelling,
         llvm::StringRef(SuffixBegin, ThisTokEnd - SuffixBegin).str();
     err_msg += (isFixedPointConstant ? "2"
                 : (isFPConstant ? "1" : "0"));
-    //Diags_Report(Lexer::AdvanceToTokenCharacter(
-    //                 TokLoc, SuffixBegin - ThisTokBegin, SM, LangOpts),
     Diags_Report(SuffixBegin - ThisTokBegin - TokLoc,
                  diag::err_invalid_suffix_constant, err_msg);
         hadError = true;
@@ -501,8 +484,6 @@ void NumericLiteralParser::ParseNumberStartingWithZero(unsigned TokLoc,
     }
 
     if (!HasSignificandDigits) {
-      //Diags_Report(Lexer::AdvanceToTokenCharacter(TokLoc, s - ThisTokBegin, SM,
-      //                                            LangOpts),
       Diags_Report(s - ThisTokBegin - TokLoc,
                    diag::err_hex_constant_requires, "1");
       hadError = true;
@@ -520,8 +501,6 @@ void NumericLiteralParser::ParseNumberStartingWithZero(unsigned TokLoc,
       const char *first_non_digit = SkipDigits(s);
       if (!containsDigits(s, first_non_digit)) {
         if (!hadError) {
-          //Diags_Report(Lexer::AdvanceToTokenCharacter(
-          //                 TokLoc, Exponent - ThisTokBegin, SM, LangOpts),
           Diags_Report(Exponent - ThisTokBegin - TokLoc,
                        diag::err_exponent_has_no_digits, "");
           hadError = true;
@@ -534,8 +513,6 @@ void NumericLiteralParser::ParseNumberStartingWithZero(unsigned TokLoc,
       if (!AllowHexFloats)
         Diags_Report(TokLoc, diag::ext_hex_literal_invalid, "");
     } else if (saw_period) {
-      //Diags_Report(Lexer::AdvanceToTokenCharacter(TokLoc, s - ThisTokBegin, SM,
-      //                                            LangOpts),
       Diags_Report(s - ThisTokBegin - TokLoc,
                    diag::err_hex_constant_requires, "0");
       hadError = true;
@@ -558,8 +535,6 @@ void NumericLiteralParser::ParseNumberStartingWithZero(unsigned TokLoc,
       // Done.
     } else if (isHexDigit(*s)) {
       std::string err_msg = llvm::StringRef(s, 1).str() +  "2";
-      //Diags_Report(Lexer::AdvanceToTokenCharacter(TokLoc, s - ThisTokBegin, SM,
-      //                                            LangOpts),
       Diags_Report(s - ThisTokBegin - TokLoc,
                    diag::err_invalid_digit, err_msg);
       hadError = true;
@@ -604,7 +579,6 @@ void NumericLiteralParser::ParseDecimalOrOctalCommon(unsigned TokLoc) {
     std::string err_msg = llvm::StringRef(s, 1).str();
     err_msg += (radix == 8 ? "1" : "0");
     Diags_Report(
-        //Lexer::AdvanceToTokenCharacter(TokLoc, s - ThisTokBegin, SM, LangOpts),
         s - ThisTokBegin - TokLoc,
         diag::err_invalid_digit, err_msg);
     hadError = true;
@@ -632,8 +606,6 @@ void NumericLiteralParser::ParseDecimalOrOctalCommon(unsigned TokLoc) {
       s = first_non_digit;
     } else {
       if (!hadError) {
-        //Diags_Report(Lexer::AdvanceToTokenCharacter(
-        //                 TokLoc, Exponent - ThisTokBegin, SM, LangOpts),
         Diags_Report(Exponent - ThisTokBegin - TokLoc,
                      diag::err_exponent_has_no_digits, "");
         hadError = true;
@@ -653,8 +625,6 @@ void NumericLiteralParser::CheckSeparator(unsigned TokLoc, const char *Pos,
     return;
 
   if (isDigitSeparator(*Pos)) {
-    //Diags_Report(Lexer::AdvanceToTokenCharacter(TokLoc, Pos - ThisTokBegin, SM,
-    //                                            LangOpts),
     Diags_Report(Pos - ThisTokBegin - TokLoc,
                  diag::err_digit_separator_not_between_digits,
                  (IsAfterDigits ? "true" : "false"));
@@ -1122,7 +1092,7 @@ static unsigned ProcessCharEscape(const char *ThisTokBegin,
   if (Delimited) {
     if (!EndDelimiterFound)
       Diags_Report(Loc,
-                   diag::err_expected, "dil::TokenKind::r_brace");
+                   diag::err_expected, "Token::r_brace");
     else if (!HadError) {
       Diags_Report(Loc,
                    diag::ext_delimited_escape_sequence, "");
@@ -1142,7 +1112,7 @@ static unsigned ProcessCharEscape(const char *ThisTokBegin,
 
 CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
                                      unsigned Loc, DILLexer &lexer,
-                                     dil::TokenKind kind) {
+                                     Token::Kind kind) {
   // At this point we know that the character matches the regex "(L|u|U)?'.*'".
   HadError = false;
 
@@ -1151,9 +1121,9 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
   const char *TokBegin = begin;
 
   // Skip over wide character determinant.
-  if (Kind != dil::TokenKind::char_constant)
+  if (Kind != Token::char_constant)
     ++begin;
-  if (Kind == dil::TokenKind::utf8_char_constant)
+  if (Kind == Token::utf8_char_constant)
     ++begin;
 
   // Skip over the entry quote.
@@ -1172,12 +1142,12 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
   // FIXME: The "Value" is an uint64_t so we can handle char literals of
   // up to 64-bits.
   // FIXME: This extensively assumes that 'char' is 8-bits.
-  assert(lexer.getCharWidth() == 8 &&
+  assert(lexer.GetCharWidth() == 8 &&
          "Assumes char is 8 bits");
-  assert(lexer.getIntWidth() <= 64 &&
-             (lexer.getIntWidth() & 7) == 0 &&
+  assert(lexer.GetIntWidth() <= 64 &&
+             (lexer.GetIntWidth() & 7) == 0 &&
          "Assumes sizeof(int) on target is <= 64 and a multiple of char");
-  assert(lexer.getWCharWidth() <= 64 &&
+  assert(lexer.GetWCharWidth() <= 64 &&
          "Assumes sizeof(wchar) on target is <= 64");
 
   llvm::SmallVector<uint32_t, 4> codepoint_buffer;
@@ -1189,10 +1159,10 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
   // represented in a single code unit are disallowed in character literals
   // by this implementation.
   uint32_t largest_character_for_kind;
-  if (dil::TokenKind::wide_char_constant == Kind) {
+  if (Token::wide_char_constant == Kind) {
     largest_character_for_kind =
-        0xFFFFFFFFu >> (lexer.getWCharWidth());
-  } else if (dil::TokenKind::utf8_char_constant == Kind) {
+        0xFFFFFFFFu >> (lexer.GetWCharWidth());
+  } else if (Token::utf8_char_constant == Kind) {
     largest_character_for_kind = 0x7F;
   } else {
     largest_character_for_kind = 0x7Fu;
@@ -1279,7 +1249,7 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
     IsMultiChar = false;
   }
 
-  llvm::APInt LitVal(lexer.getIntWidth(), 0);
+  llvm::APInt LitVal(lexer.GetIntWidth(), 0);
 
   // Narrow character literals act as though their value is concatenated
   // in this implementation, but warn on overflow.
@@ -1313,61 +1283,64 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
 }
 
 
-StringLiteralParser::StringLiteralParser(llvm::ArrayRef<DILToken> StringToks,
+StringLiteralParser::StringLiteralParser(llvm::ArrayRef<Token> StringToks,
                                          DILLexer &lexer,
                                          StringLiteralEvalMethod EvalMethod) :
     MaxTokenLength(0), SizeBound(0), CharByteWidth(0),
-    Kind(dil::TokenKind::unknown), ResultPtr(ResultBuf.data()),
+    //Kind(Token::unknown),
+    ResultPtr(ResultBuf.data()),
     EvalMethod(EvalMethod), m_lexer(lexer), hadError(false) {
   init(StringToks, lexer);
 }
 
 
-void StringLiteralParser::init(llvm::ArrayRef<DILToken> StringToks,
+void StringLiteralParser::init(llvm::ArrayRef<Token> StringToks,
                                DILLexer &lexer) {
   // The literal token may have come from an invalid source location (e.g. due
   // to a PCH error), in which case the token length will be 0.
-  if (StringToks.empty() || StringToks[0].getLength() < 2)
-    return DiagnoseLexingError(lexer.GetLocation());
+  if (StringToks.empty())
+    return DiagnoseLexingError(0);
+  if (StringToks[0].GetSpelling().size() < 2)
+    return DiagnoseLexingError(StringToks[0].GetLocation());
 
   // Scan all of the string portions, remember the max individual token length,
   // computing a bound on the concatenated string length, and see whether any
   // piece is a wide-string.  If any of the string portions is a wide-string
   // literal, the result is a wide-string literal [C99 6.4.5p4].
   assert(!StringToks.empty() && "expected at least one token");
-  MaxTokenLength = StringToks[0].getLength();
-  assert(StringToks[0].getLength() >= 2 && "literal token is invalid!");
-  SizeBound = StringToks[0].getLength() - 2; // -2 for "".
+  MaxTokenLength = StringToks[0].GetSpelling().size();
+  assert(StringToks[0].GetSpelling().size() >= 2 && "literal token is invalid!");
+  SizeBound = StringToks[0].GetSpelling().size() - 2; // -2 for "".
   hadError = false;
 
   // Determines the kind of string from the prefix
-  Kind = dil::TokenKind::string_literal;
+  Kind = Token::string_literal;
 
   /// (C99 5.1.1.2p1).  The common case is only one string fragment.
-  for (const DILToken &Tok : StringToks) {
-    if (Tok.getLength() < 2)
-      return DiagnoseLexingError(Tok.getLocation());
+  for (const Token &Tok : StringToks) {
+    if (Tok.GetSpelling().size() < 2)
+      return DiagnoseLexingError(Tok.GetLocation());
 
     // The string could be shorter than this if it needs cleaning, but this is a
     // reasonable bound, which is all we need.
-    assert(Tok.getLength() >= 2 && "literal token is invalid!");
-    SizeBound += Tok.getLength() - 2; // -2 for "".
+    assert(Tok.GetSpelling().size() >= 2 && "literal token is invalid!");
+    SizeBound += Tok.GetSpelling().size() - 2; // -2 for "".
 
     // Remember maximum string piece length.
-    if (Tok.getLength() > MaxTokenLength)
-      MaxTokenLength = Tok.getLength();
+    if (Tok.GetSpelling().size() > MaxTokenLength)
+      MaxTokenLength = Tok.GetSpelling().size();
 
     // Remember if we see any wide or utf-8/16/32 strings.
     // Also check for illegal concatenations.
-    if (isUnevaluated() && Tok.getKind() != dil::TokenKind::string_literal) {
-      Diags_Report(Tok.getLocation(),
+    if (isUnevaluated() && Tok.GetKind() != Token::string_literal) {
+      Diags_Report(Tok.GetLocation(),
                    diag::warn_unevaluated_string_prefix, "");
         hadError = true;
-    } else if (Tok.isNot(Kind) && Tok.isNot(dil::TokenKind::string_literal)) {
+    } else if (Tok.IsNot(Kind) && Tok.IsNot(Token::string_literal)) {
       if (isOrdinary()) {
-        Kind = Tok.getKind();
+        Kind = Tok.GetKind();
       } else {
-        Diags_Report(Tok.getLocation(), diag::err_unsupported_string_concat,
+        Diags_Report(Tok.GetLocation(), diag::err_unsupported_string_concat,
                      "");
         hadError = true;
       }
@@ -1405,13 +1378,10 @@ void StringLiteralParser::init(llvm::ArrayRef<DILToken> StringToks,
     // that ThisTokBuf points to a buffer that is big enough for the whole token
     // and 'spelled' tokens can only shrink.
     bool StringInvalid = false;
-    //unsigned ThisTokLen = // CAROLINE!!
-    //  Lexer::getSpelling(StringToks[i], ThisTokBuf, SM, Features,
-    //                     &StringInvalid);
-    ThisTokBuf = StringToks[i].getSpelling().data();
-    unsigned ThisTokLen = StringToks[i].getLength();
+    ThisTokBuf = StringToks[i].GetSpelling().data();
+    unsigned ThisTokLen = StringToks[i].GetSpelling().size();
     if (StringInvalid)
-      return DiagnoseLexingError(StringToks[i].getLocation());
+      return DiagnoseLexingError(StringToks[i].GetLocation());
 
     const char *ThisTokBegin = ThisTokBuf;
     const char *ThisTokEnd = ThisTokBuf+ThisTokLen;
@@ -1434,7 +1404,7 @@ void StringLiteralParser::init(llvm::ArrayRef<DILToken> StringToks,
       if (ThisTokBuf[1] != '"') {
         // The file may have come from PCH and then changed after loading the
         // PCH; Fail gracefully.
-        return DiagnoseLexingError(StringToks[i].getLocation());
+        return DiagnoseLexingError(StringToks[i].GetLocation());
       }
       ThisTokBuf += 2; // skip R"
 
@@ -1447,13 +1417,13 @@ void StringLiteralParser::init(llvm::ArrayRef<DILToken> StringToks,
              ThisTokBuf[0] != '(')
         ++ThisTokBuf;
       if (ThisTokBuf[0] != '(')
-        return DiagnoseLexingError(StringToks[i].getLocation());
+        return DiagnoseLexingError(StringToks[i].GetLocation());
       ++ThisTokBuf; // skip '('
 
       // Remove same number of characters from the end
       ThisTokEnd -= ThisTokBuf - Prefix;
       if (ThisTokEnd < ThisTokBuf)
-        return DiagnoseLexingError(StringToks[i].getLocation());
+        return DiagnoseLexingError(StringToks[i].GetLocation());
 
       // C++14 [lex.string]p4: A source-file new-line in a raw string literal
       // results in a new-line in the resulting execution string-literal.
@@ -1476,7 +1446,7 @@ void StringLiteralParser::init(llvm::ArrayRef<DILToken> StringToks,
       if (ThisTokBuf[0] != '"') {
         // The file may have come from PCH and then changed after loading the
         // PCH; Fail gracefully.
-        return DiagnoseLexingError(StringToks[i].getLocation());
+        return DiagnoseLexingError(StringToks[i].GetLocation());
       }
       ++ThisTokBuf; // skip "
 
@@ -1499,14 +1469,14 @@ void StringLiteralParser::init(llvm::ArrayRef<DILToken> StringToks,
             ThisTokBuf[1] == 'N') {
           EncodeUCNEscape(ThisTokBegin, ThisTokBuf, ThisTokEnd,
                           ResultPtr, hadError,
-                          StringToks[i].getLocation(),
+                          StringToks[i].GetLocation(),
                           CharByteWidth);
           continue;
         }
         // Otherwise, this is a non-UCN escape character.  Process it.
         unsigned ResultChar =
             ProcessCharEscape(ThisTokBegin, ThisTokBuf, ThisTokEnd, hadError,
-                              StringToks[i].getLocation(),
+                              StringToks[i].GetLocation(),
                               CharByteWidth * 8, EvalMethod);
 
         if (CharByteWidth == 4) {
@@ -1533,7 +1503,7 @@ void StringLiteralParser::init(llvm::ArrayRef<DILToken> StringToks,
   unsigned MaxChars = 65536;
 
   if (GetNumStringChars() > MaxChars)
-    Diags_Report(StringToks.front().getLocation(),
+    Diags_Report(StringToks.front().GetLocation(),
                  diag::ext_string_too_long,"");
 }
 
@@ -1581,18 +1551,16 @@ static int MeasureUCNEscape(const char *ThisTokBegin, const char *&ThisTokBuf,
 }
 
 
-unsigned StringLiteralParser::getOffsetOfStringByte(const DILToken &Tok,
+unsigned StringLiteralParser::getOffsetOfStringByte(const Token &Tok,
                                                     unsigned ByteNo) const {
   // Get the spelling of the token.
   llvm::SmallString<32> SpellingBuffer;
-  SpellingBuffer.resize(Tok.getLength());
+  SpellingBuffer.resize(Tok.GetSpelling().size());
 
   bool StringInvalid = false;
   const char *SpellingPtr = &SpellingBuffer[0];
-  SpellingPtr = Tok.getSpelling().data();
-  unsigned TokLen = Tok.getLength();
-  //unsigned TokLen = Lexer::getSpelling(Tok, SpellingPtr, SM, Features,
-  //           &StringInvalid);
+  SpellingPtr = Tok.GetSpelling().data();
+  unsigned TokLen = Tok.GetSpelling().size();
   if (StringInvalid)
     return 0;
 
@@ -1650,7 +1618,7 @@ unsigned StringLiteralParser::getOffsetOfStringByte(const DILToken &Tok,
       ByteNo -= Len;
     } else {
       ProcessCharEscape(SpellingStart, SpellingPtr, SpellingEnd, HadError,
-                        Tok.getLocation(), CharByteWidth * 8,
+                        Tok.GetLocation(), CharByteWidth * 8,
                         StringLiteralEvalMethod::Evaluated);
       --ByteNo;
     }
@@ -1661,7 +1629,7 @@ unsigned StringLiteralParser::getOffsetOfStringByte(const DILToken &Tok,
 }
 
 
-bool StringLiteralParser::CopyStringFragment(const DILToken &Tok,
+bool StringLiteralParser::CopyStringFragment(const Token &Tok,
                                              const char *TokBegin,
                                              llvm::StringRef Fragment) {
   const llvm::UTF8 *ErrorPtrTmp;
@@ -1679,7 +1647,7 @@ bool StringLiteralParser::CopyStringFragment(const DILToken &Tok,
 
   const char *ErrorPtr = reinterpret_cast<const char *>(ErrorPtrTmp);
 
-  uint32_t SourceLoc = Tok.getLocation();
+  uint32_t SourceLoc = Tok.GetLocation();
   Diags_Report(SourceLoc,
                NoErrorOnBadEncoding ? diag::warn_bad_string_encoding
                : diag::err_bad_string_encoding, "");
@@ -1707,6 +1675,4 @@ void StringLiteralParser::DiagnoseLexingError(unsigned Loc) {
   Diags_Report(Loc, diag::err_lexing_string, "");
 }
 
-} // namespace dil
-
-} // namespace lldb_private
+} // namespace lldb_private::dil

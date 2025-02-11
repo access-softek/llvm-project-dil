@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLDB_VALUEOBJECT_DILPARSER_H_
-#define LLDB_VALUEOBJECT_DILPARSER_H_
+#ifndef LLDB_VALUEOBJECT_DILPARSER_H
+#define LLDB_VALUEOBJECT_DILPARSER_H
 
 #include <memory>
 #include <optional>
@@ -21,9 +21,7 @@
 #include "lldb/ValueObject/DILLexer.h"
 #include "lldb/ValueObject/DILLiteralParsers.h"
 
-namespace lldb_private {
-
-namespace dil {
+namespace lldb_private::dil {
 
 /// Finds the member field with the given name and type, stores the child index
 /// corresponding to the field in the idx vector and returns a MemberInfo
@@ -59,8 +57,8 @@ enum class ErrorCode : unsigned char {
   kUnknown,
 };
 
-std::string FormatDiagnostics(DILSourceManager &sm, const std::string &message,
-                              uint32_t loc);
+std::string FormatDiagnostics(llvm::StringRef input_expr,
+                              const std::string& message, uint32_t loc);
 
 void SetUbStatus(Status& error, ErrorCode code);
 
@@ -140,7 +138,7 @@ class BuiltinFunctionDef {
 /// EBNF grammar for the parser is described in lldb/docs/dil-expr-lang.ebnf
 class DILParser {
  public:
-  explicit DILParser(std::shared_ptr<DILSourceManager> dil_sm,
+  explicit DILParser(llvm::StringRef dil_input_expr, DILLexer lexer,
                      std::shared_ptr<ExecutionContextScope> exe_ctx_scope,
                      lldb::DynamicValueType use_dynamic,
                      bool use_synthetic, bool fragile_ivar,
@@ -154,7 +152,7 @@ class DILParser {
 
   lldb::DynamicValueType UseDynamic() { return m_use_dynamic; }
 
-  using PtrOperator = std::tuple<dil::TokenKind, uint32_t>;
+  using PtrOperator = std::tuple<Token::Kind, uint32_t>;
 
  private:
   DILASTNodeUP ParseExpression();
@@ -188,9 +186,9 @@ class DILParser {
       CompilerType type,
       const std::vector<PtrOperator>& ptr_operators);
 
-  bool IsSimpleTypeSpecifierKeyword(DILToken token) const;
-  bool IsCvQualifier(DILToken token) const;
-  bool IsPtrOperator(DILToken token) const;
+  bool IsSimpleTypeSpecifierKeyword(Token token) const;
+  bool IsCvQualifier(Token token) const;
+  bool IsPtrOperator(Token token) const;
   bool HandleSimpleTypeSpecifier(TypeDeclaration* type_decl);
 
   std::string ParseIdExpression();
@@ -202,9 +200,9 @@ class DILParser {
   DILASTNodeUP ParsePointerLiteral();
   DILASTNodeUP ParseNumericConstant();
   DILASTNodeUP ParseFloatingLiteral(NumericLiteralParser& literal,
-                                    DILToken& token);
+                                    Token& token);
   DILASTNodeUP ParseIntegerLiteral(NumericLiteralParser& literal,
-                                   DILToken& token);
+                                   Token& token);
   DILASTNodeUP ParseBuiltinFunction(uint32_t loc,
                                   std::unique_ptr<BuiltinFunctionDef> func_def);
 
@@ -219,17 +217,17 @@ class DILParser {
 
   void BailOut(Status error);
 
-  void Expect(dil::TokenKind kind);
+  void Expect(Token::Kind kind);
 
-  std::string TokenDescription(const DILToken& token);
+  std::string TokenDescription(const Token& token);
 
   template <typename... Ts>
-  void ExpectOneOf(dil::TokenKind k, Ts... ks);
+  void ExpectOneOf(Token::Kind k, Ts... ks);
 
   DILASTNodeUP BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
                              uint32_t location);
-  DILASTNodeUP BuildCxxCast(dil::TokenKind kind, CompilerType type,
-                          DILASTNodeUP rhs, uint32_t location);
+  DILASTNodeUP BuildCxxCast(Token::Kind kind, CompilerType type,
+                            DILASTNodeUP rhs, uint32_t location);
   DILASTNodeUP BuildCxxDynamicCast(CompilerType type, DILASTNodeUP rhs,
                                  uint32_t location);
   DILASTNodeUP BuildCxxStaticCast(CompilerType type, DILASTNodeUP rhs,
@@ -305,9 +303,11 @@ class DILParser {
   // context will outlive the parser.
   std::shared_ptr<ExecutionContextScope> m_ctx_scope;
 
-  std::shared_ptr<DILSourceManager> m_sm;
+  llvm::StringRef m_input_expr;
+
+  DILLexer m_dil_lexer;
   // The token lexer is stopped at (aka "current token").
-  DILToken m_dil_token;
+  Token m_dil_token;
   // Holds an error if it occures during parsing.
   Status m_error;
 
@@ -317,11 +317,8 @@ class DILParser {
   bool m_use_synthetic;
   bool m_fragile_ivar;
   bool m_check_ptr_vs_member;
-  DILLexer m_dil_lexer;
 }; // class DILParser
 
-}  // namespace dil
+}  // namespace lldb_private::dil
 
-}  // namespace lldb_private
-
-#endif  // LLDB_VALUEOBJECT_DILPARSER_H_
+#endif  // LLDB_VALUEOBJECT_DILPARSER_H

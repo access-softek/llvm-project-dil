@@ -25,9 +25,7 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/Support/Casting.h"
 
-namespace lldb_private {
-
-namespace dil {
+namespace lldb_private::dil {
 
 /// Struct to hold information about member fields. Used by the parser for the
 /// Data Inspection Language (DIL).
@@ -142,7 +140,7 @@ enum class UnaryOpKind {
 
 /// Translates DIL tokens to BinaryOpKind.
 BinaryOpKind
-    dil_token_kind_to_binary_op_kind(dil::TokenKind token_kind);
+    dil_token_kind_to_binary_op_kind(Token::Kind token_kind);
 
 /// Returns bool indicating whether or not the input kind is an assignment.
 bool binary_op_kind_is_comp_assign(BinaryOpKind kind);
@@ -745,8 +743,6 @@ public:
   virtual void Visit(const TernaryOpNode *node) = 0;
 };
 
-}  // namespace dil
-
-} // namespace lldb_private
+} // namespace lldb_private::dil
 
 #endif // LLDB_VALUEOBJECT_DILAST_H

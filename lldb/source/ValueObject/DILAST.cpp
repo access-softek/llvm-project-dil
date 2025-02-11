@@ -402,6 +402,10 @@ ResolveTypeByName(const std::string &name,
   if (full_match.IsValid())
     return full_match;
 
+  // If we have partial matches, pick a "random" one.
+  if (partial_matches.size() > 0)
+    return partial_matches.back();
+
   return {};
 }
 

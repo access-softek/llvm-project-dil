@@ -2015,7 +2015,7 @@ std::string DILParser::ParseTypeName() {
       // consume it -- it will be done on the outer level when completing the
       // outer template argument list or C++-style cast.
       uint32_t loc = m_dil_token.GetLocation();
-      m_dil_token = Token(Token::greater, ">", loc);
+      m_dil_lexer.GetCurrentToken().SetKind(Token::greater);
       m_dil_lexer.InsertToken(Token(Token::greater, ">", loc+1));
 
     } else {

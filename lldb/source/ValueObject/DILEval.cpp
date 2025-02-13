@@ -884,6 +884,8 @@ void DILInterpreter::Visit(const MemberOfNode* node) {
 
   if (node->valobj()) {
     m_result = node->valobj()->GetSP();
+    if (m_result->GetCompilerType().IsReferenceType())
+      m_result = m_result->Dereference(error);
   } else {
     if (base->GetCompilerType().IsReferenceType())
       base = base->Dereference(error);

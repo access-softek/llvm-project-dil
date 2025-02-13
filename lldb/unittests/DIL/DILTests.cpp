@@ -986,16 +986,16 @@ TEST_F(EvalTest, TestLocalVariables) {
 
 TEST_F(EvalTest, TestMemberOf) {
   EXPECT_THAT(Eval("s.x"), IsEqual("1"));
-  EXPECT_THAT(Eval("s.r"), XFail(IsEqual("2")));
+  EXPECT_THAT(Eval("s.r"), IsEqual("2"));
   EXPECT_THAT(Eval("s.r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("sr.x"), IsEqual("1"));
-  EXPECT_THAT(Eval("sr.r"), XFail(IsEqual("2")));
+  EXPECT_THAT(Eval("sr.r"), IsEqual("2"));
   EXPECT_THAT(Eval("sr.r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("sp->x"), IsEqual("1"));
-  EXPECT_THAT(Eval("sp->r"), XFail(IsEqual("2")));
+  EXPECT_THAT(Eval("sp->r"), IsEqual("2"));
   EXPECT_THAT(Eval("sp->r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("sarr->x"), IsEqual("5"));
-  EXPECT_THAT(Eval("sarr->r"), XFail(IsEqual("2")));
+  EXPECT_THAT(Eval("sarr->r"), IsEqual("2"));
   EXPECT_THAT(Eval("sarr->r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("(sarr + 1)->x"), IsEqual("1"));
 

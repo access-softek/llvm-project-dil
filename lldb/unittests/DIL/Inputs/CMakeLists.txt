@@ -10,7 +10,10 @@ if ("libcxx" IN_LIST LLVM_ENABLE_RUNTIMES)
   else()
     set(LIBCXX_LIBRARY_DIR ${CMAKE_BINARY_DIR}/lib${LIBCXX_LIBDIR_SUFFIX})
     set(LIBCXX_GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/include/c++/v1")
-    set(LIBCXX_GENERATED_INCLUDE_TARGET_DIR "${CMAKE_BINARY_DIR}/include/c++/v1")
+  endif()
+
+  if(DEFINED LIBCXX_GENERATED_INCLUDE_TARGET_DIR)
+    set(INCLUDE_TARGET_DIR_OPTION "-cxx-isystem" "${LIBCXX_GENERATED_INCLUDE_TARGET_DIR}")
   endif()
 
   get_target_property(EXE_PATH DILTests RUNTIME_OUTPUT_DIRECTORY)
@@ -18,9 +21,9 @@ if ("libcxx" IN_LIST LLVM_ENABLE_RUNTIMES)
     OUTPUT test_binary.bin
     COMMAND $<TARGET_FILE:clang> ${CMAKE_CURRENT_SOURCE_DIR}/test_binary.cc
             -O0 -g -std=c++17 -fuse-ld=lld -B$<TARGET_FILE:lld>
-            -L ${LIBCXX_LIBRARY_DIR} -stdlib=libc++ -lc++ 
-            -I ${LIBCXX_GENERATED_INCLUDE_DIR}
-            -I ${LIBCXX_GENERATED_INCLUDE_TARGET_DIR}
+            -nostdlib++ -nostdinc++ -cxx-isystem ${LIBCXX_GENERATED_INCLUDE_DIR}
+            ${INCLUDE_TARGET_DIR_OPTION}
+            -L${LIBCXX_LIBRARY_DIR} -Wl,-rpath,${LIBCXX_LIBRARY_DIR} -lc++
             -o ${EXE_PATH}/Inputs/test_binary.bin
     DEPENDS test_binary.cc clang lld
   )

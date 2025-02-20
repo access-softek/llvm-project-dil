@@ -1571,11 +1571,11 @@ TEST_F(EvalTest, TestCxxStaticCast) {
 
   // Cast to nullptr.
   EXPECT_THAT(Eval("static_cast<nullptr_t>((int)0)"),
-              IsError("static_cast from 'int' to 'nullptr_t' (canonically "
+              IsError("static_cast from 'int' to 'std::__1::nullptr_t' (canonically "
                       "referred to as 'std::nullptr_t')"
                       " is not allowed"));
   EXPECT_THAT(Eval("static_cast<nullptr_t>((void*)0)"),
-              IsError("static_cast from 'void *' to 'nullptr_t' (canonically "
+              IsError("static_cast from 'void *' to 'std::__1::nullptr_t' (canonically "
                       "referred to as 'std::nullptr_t')"
                       " is not allowed"));
 
@@ -1797,18 +1797,17 @@ TEST_F(EvalTest, TestCxxReinterpretCast) {
       Eval("reinterpret_cast<void*>(nullptr)"),
       IsError("reinterpret_cast from 'std::nullptr_t' to 'void *' is not "
               "allowed"));
-  GTEST_SKIP() << "Unknown error string mismatch";
   EXPECT_THAT(
       Eval("reinterpret_cast<nullptr_t>(ptr)"),
-      IsError("reinterpret_cast from 'int *' to 'nullptr_t' "
+      IsError("reinterpret_cast from 'int *' to 'std::__1::nullptr_t' "
               "(canonically referred to as 'std::nullptr_t') is not allowed"));
   EXPECT_THAT(
       Eval("reinterpret_cast<nullptr_t>(0)"),
-      IsError("reinterpret_cast from 'int' to 'nullptr_t' "
+      IsError("reinterpret_cast from 'int' to 'std::__1::nullptr_t' "
               "(canonically referred to as 'std::nullptr_t') is not allowed"));
   EXPECT_THAT(
       Eval("reinterpret_cast<nullptr_t>(nullptr)"),
-      IsError("reinterpret_cast from 'std::nullptr_t' to 'nullptr_t' "
+      IsError("reinterpret_cast from 'std::nullptr_t' to 'std::__1::nullptr_t' "
               "(canonically referred to as 'std::nullptr_t') is not allowed"));
 }
 

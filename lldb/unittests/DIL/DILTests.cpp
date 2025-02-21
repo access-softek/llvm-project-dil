@@ -3680,3 +3680,12 @@ TEST_F(EvalTest, DISABLED_TestStringParsing) {
   EXPECT_THAT(Eval("*\"abc\""), IsError("string literals are not supported"));
 }
 #endif
+
+TEST_F(EvalTest, TestUnicodeIdentifiers) {
+  EXPECT_THAT(Eval("フー + 1"), IsEqual("2"));
+  EXPECT_THAT(Eval("1 + フー"), IsEqual("2"));
+  EXPECT_THAT(Eval("фу + бар"),
+              IsError("<expr:1:6>: use of undeclared identifier 'бар'\n"
+                      "фу + бар\n"
+                      "     ^"));
+}

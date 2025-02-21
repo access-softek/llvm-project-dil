@@ -12,8 +12,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/ValueObject/DILLexer.h"
+#include "clang/Basic/CharInfo.h"
 //#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/ConvertUTF.h"
+#include "llvm/Support/UnicodeCharRanges.h"
 
 namespace lldb_private::dil {
 
@@ -44,6 +47,69 @@ const llvm::StringMap<Token::Kind> Keywords = {
     {"volatile", Token::kw_volatile},
     {"wchar_t", Token::kw_wchar_t}};
 */
+
+using clang::isDigit;
+static bool isValidIdentifierContinuationCodePoint(uint32_t c) {
+  // N1518: Recommendations for extended identifier characters for C and C++
+  // Proposed Annex X.1: Ranges of characters allowed
+  return c == 0x00A8 || c == 0x00AA || c == 0x00AD || c == 0x00AF ||
+         (c >= 0x00B2 && c <= 0x00B5) || (c >= 0x00B7 && c <= 0x00BA) ||
+         (c >= 0x00BC && c <= 0x00BE) || (c >= 0x00C0 && c <= 0x00D6) ||
+         (c >= 0x00D8 && c <= 0x00F6) || (c >= 0x00F8 && c <= 0x00FF)
+
+         || (c >= 0x0100 && c <= 0x167F) || (c >= 0x1681 && c <= 0x180D) ||
+         (c >= 0x180F && c <= 0x1FFF)
+
+         || (c >= 0x200B && c <= 0x200D) || (c >= 0x202A && c <= 0x202E) ||
+         (c >= 0x203F && c <= 0x2040) || c == 0x2054 ||
+         (c >= 0x2060 && c <= 0x206F)
+
+         || (c >= 0x2070 && c <= 0x218F) || (c >= 0x2460 && c <= 0x24FF) ||
+         (c >= 0x2776 && c <= 0x2793) || (c >= 0x2C00 && c <= 0x2DFF) ||
+         (c >= 0x2E80 && c <= 0x2FFF)
+
+         || (c >= 0x3004 && c <= 0x3007) || (c >= 0x3021 && c <= 0x302F) ||
+         (c >= 0x3031 && c <= 0x303F)
+
+         || (c >= 0x3040 && c <= 0xD7FF)
+
+         || (c >= 0xF900 && c <= 0xFD3D) || (c >= 0xFD40 && c <= 0xFDCF) ||
+         (c >= 0xFDF0 && c <= 0xFE44) || (c >= 0xFE47 && c <= 0xFFF8)
+
+         || (c >= 0x10000 && c <= 0x1FFFD) || (c >= 0x20000 && c <= 0x2FFFD) ||
+         (c >= 0x30000 && c <= 0x3FFFD) || (c >= 0x40000 && c <= 0x4FFFD) ||
+         (c >= 0x50000 && c <= 0x5FFFD) || (c >= 0x60000 && c <= 0x6FFFD) ||
+         (c >= 0x70000 && c <= 0x7FFFD) || (c >= 0x80000 && c <= 0x8FFFD) ||
+         (c >= 0x90000 && c <= 0x9FFFD) || (c >= 0xA0000 && c <= 0xAFFFD) ||
+         (c >= 0xB0000 && c <= 0xBFFFD) || (c >= 0xC0000 && c <= 0xCFFFD) ||
+         (c >= 0xD0000 && c <= 0xDFFFD) || (c >= 0xE0000 && c <= 0xEFFFD);
+}
+
+static bool isValidIdentifierStartCodePoint(uint32_t c) {
+  if (!isValidIdentifierContinuationCodePoint(c))
+    return false;
+  if (c < 0x80 && (isDigit(c) || c == '$'))
+    return false;
+
+  // N1518: Recommendations for extended identifier characters for C and C++
+  // Proposed Annex X.2: Ranges of characters disallowed initially
+  if ((c >= 0x0300 && c <= 0x036F) || (c >= 0x1DC0 && c <= 0x1DFF) ||
+      (c >= 0x20D0 && c <= 0x20FF) || (c >= 0xFE20 && c <= 0xFE2F))
+    return false;
+
+  return true;
+}
+
+static const llvm::sys::UnicodeCharRange UnicodeWhitespaceCharRanges[] = {
+    {0x0085, 0x0085}, {0x00A0, 0x00A0}, {0x1680, 0x1680},
+    {0x180E, 0x180E}, {0x2000, 0x200A}, {0x2028, 0x2029},
+    {0x202F, 0x202F}, {0x205F, 0x205F}, {0x3000, 0x3000}};
+
+static bool isUnicodeWhitespace(uint32_t Codepoint) {
+  static const llvm::sys::UnicodeCharSet UnicodeWhitespaceChars(
+      UnicodeWhitespaceCharRanges);
+  return UnicodeWhitespaceChars.contains(Codepoint);
+}
 
 llvm::StringRef Token::GetTokenName(Kind kind) {
   switch (kind){
@@ -224,8 +290,9 @@ static std::optional<llvm::StringRef> IsNumber(llvm::StringRef expr,
 llvm::Expected<DILLexer> DILLexer::Create(llvm::StringRef expr) {
   std::vector<Token> tokens;
   llvm::StringRef remainder = expr;
+  uint32_t position = 0;
   do {
-    if (llvm::Expected<Token> t = Lex(expr, remainder)) {
+    if (llvm::Expected<Token> t = Lex(expr, remainder, position)) {
       tokens.push_back(std::move(*t));
     } else {
       return t.takeError();
@@ -234,23 +301,27 @@ llvm::Expected<DILLexer> DILLexer::Create(llvm::StringRef expr) {
   return DILLexer(expr, std::move(tokens));
 }
 
-
 llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
-                                    llvm::StringRef &remainder) {
+                                    llvm::StringRef &remainder,
+                                    uint32_t &position) {
+  llvm::StringRef::iterator cur_pos = remainder.begin();
   // Skip over whitespace (spaces).
   remainder = remainder.ltrim();
-  llvm::StringRef::iterator cur_pos = remainder.begin();
+  position += remainder.begin() - cur_pos;
+  cur_pos = remainder.begin();
 
   // Check to see if we've reached the end of our input string.
   if (remainder.empty())
-    return Token(Token::eof, "", (uint32_t)expr.size());
+    return Token(Token::eof, "", position);
 
-  uint32_t position = cur_pos - expr.begin();;
+  // uint32_t position = cur_pos - expr.begin();;
   llvm::StringRef::iterator start = cur_pos;
   std::optional<llvm::StringRef> maybe_number = IsNumber(expr, remainder);
   if (maybe_number) {
     std::string number = (*maybe_number).str();
-    return Token(Token::numeric_constant, number, position);
+    auto token = Token(Token::numeric_constant, number, position);
+    position += number.size();
+    return token;
   } else {
     std::optional<llvm::StringRef> maybe_word = IsWord(expr, remainder);
     if (maybe_word) {
@@ -281,7 +352,9 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
                             .Case("volatile", Token::kw_volatile)
                             .Case("wchar_t", Token::kw_wchar_t)
                             .Default(Token::identifier);
-      return Token(kind, word.str(), (uint32_t)position);
+      auto token = Token(kind, word.str(), position);
+      position += word.size();
+      return token;
     }
   }
 
@@ -332,8 +405,41 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
     {Token::tilde, "~"},
   };
   for (auto [kind, str] : operators) {
-    if (remainder.consume_front(str))
-      return Token(kind, str, position);
+    if (remainder.consume_front(str)) {
+      auto token = Token(kind, str, position);
+      position += strlen(str);
+      return token;
+    }
+  }
+
+  cur_pos = start;
+  llvm::UTF32 CodePoint;
+  llvm::ConversionResult Status;
+  unsigned size = llvm::getNumBytesForUTF8(*cur_pos);
+  Status = llvm::convertUTF8Sequence((const llvm::UTF8 **)&cur_pos,
+                                     (const llvm::UTF8 *)remainder.end(),
+                                     &CodePoint, llvm::strictConversion);
+  if (Status == llvm::conversionOK &&
+      isValidIdentifierStartCodePoint(CodePoint)) {
+    unsigned utf_length = 1;
+    unsigned length = size;
+    while (true) {
+      size = llvm::getNumBytesForUTF8(*cur_pos);
+      Status = llvm::convertUTF8Sequence((const llvm::UTF8 **)&cur_pos,
+                                         (const llvm::UTF8 *)remainder.end(),
+                                         &CodePoint, llvm::strictConversion);
+      if (Status != llvm::conversionOK ||
+          !isValidIdentifierContinuationCodePoint(CodePoint))
+        break;
+      utf_length++;
+      length += size;
+    }
+
+    remainder = remainder.drop_front(length);
+    llvm::StringRef utf_token(start, length);
+    auto token = Token(Token::identifier, utf_token.str(), position);
+    position += utf_length;
+    return token;
   }
 
   // Unrecognized character(s) in string; unable to lex it.

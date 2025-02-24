@@ -48,8 +48,10 @@ const llvm::StringMap<Token::Kind> Keywords = {
     {"wchar_t", Token::kw_wchar_t}};
 */
 
-using clang::isDigit;
 static bool isValidIdentifierContinuationCodePoint(uint32_t c) {
+  if (c < 0x80)
+    return clang::isAsciiIdentifierContinue(c, /*dollar*/ true);
+
   // N1518: Recommendations for extended identifier characters for C and C++
   // Proposed Annex X.1: Ranges of characters allowed
   return c == 0x00A8 || c == 0x00AA || c == 0x00AD || c == 0x00AF ||
@@ -88,7 +90,7 @@ static bool isValidIdentifierContinuationCodePoint(uint32_t c) {
 static bool isValidIdentifierStartCodePoint(uint32_t c) {
   if (!isValidIdentifierContinuationCodePoint(c))
     return false;
-  if (c < 0x80 && (isDigit(c) || c == '$'))
+  if (c < 0x80 && clang::isDigit(c))
     return false;
 
   // N1518: Recommendations for extended identifier characters for C and C++
@@ -225,16 +227,37 @@ static bool IsLetter (char c) {
 
 static bool IsDigit (char c) { return ('0' <= c && c <= '9'); }
 
-static std::optional<llvm::StringRef> IsWord(llvm::StringRef expr,
-                                             llvm::StringRef &remainder) {
-  // Find the longest prefix consisting of letters, digits, underscors and
-  // '$'. If it doesn't start with a digit, then it's a word.
-  llvm::StringRef candidate = remainder.take_while(
-      [](char c) { return IsDigit(c) || IsLetter(c) || c == '_' || c == '$'; });
-  if (candidate.empty() || IsDigit(candidate[0]))
-    return std::nullopt;
-  remainder = remainder.drop_front(candidate.size());
-  return candidate;
+static std::optional<llvm::StringRef>
+IsWord(llvm::StringRef expr, llvm::StringRef &remainder, uint32_t &utf_length) {
+  llvm::StringRef::iterator cur_pos = remainder.begin();
+  llvm::StringRef::iterator start = cur_pos;
+  llvm::UTF32 CodePoint;
+  llvm::ConversionResult Status;
+  unsigned size = llvm::getNumBytesForUTF8(*cur_pos);
+  Status = llvm::convertUTF8Sequence((const llvm::UTF8 **)&cur_pos,
+                                     (const llvm::UTF8 *)remainder.end(),
+                                     &CodePoint, llvm::strictConversion);
+  if (Status == llvm::conversionOK &&
+      isValidIdentifierStartCodePoint(CodePoint)) {
+    utf_length = 1;
+    unsigned length = size;
+    while (true) {
+      size = llvm::getNumBytesForUTF8(*cur_pos);
+      Status = llvm::convertUTF8Sequence((const llvm::UTF8 **)&cur_pos,
+                                         (const llvm::UTF8 *)remainder.end(),
+                                         &CodePoint, llvm::strictConversion);
+      if (Status != llvm::conversionOK ||
+          !isValidIdentifierContinuationCodePoint(CodePoint))
+        break;
+      utf_length++;
+      length += size;
+    }
+
+    remainder = remainder.drop_front(length);
+    llvm::StringRef utf_token(start, length);
+    return utf_token;
+  }
+  return std::nullopt;
 }
 
 static void ConsumeNumberBody(uint32_t &length, char &prev_ch,
@@ -314,7 +337,6 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
   if (remainder.empty())
     return Token(Token::eof, "", position);
 
-  // uint32_t position = cur_pos - expr.begin();;
   llvm::StringRef::iterator start = cur_pos;
   std::optional<llvm::StringRef> maybe_number = IsNumber(expr, remainder);
   if (maybe_number) {
@@ -323,7 +345,9 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
     position += number.size();
     return token;
   } else {
-    std::optional<llvm::StringRef> maybe_word = IsWord(expr, remainder);
+    uint32_t utf_length = 0;
+    std::optional<llvm::StringRef> maybe_word =
+        IsWord(expr, remainder, utf_length);
     if (maybe_word) {
       llvm::StringRef word = *maybe_word;
       Token::Kind kind = llvm::StringSwitch<Token::Kind>(word)
@@ -353,7 +377,7 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
                             .Case("wchar_t", Token::kw_wchar_t)
                             .Default(Token::identifier);
       auto token = Token(kind, word.str(), position);
-      position += word.size();
+      position += utf_length;
       return token;
     }
   }
@@ -410,36 +434,6 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
       position += strlen(str);
       return token;
     }
-  }
-
-  cur_pos = start;
-  llvm::UTF32 CodePoint;
-  llvm::ConversionResult Status;
-  unsigned size = llvm::getNumBytesForUTF8(*cur_pos);
-  Status = llvm::convertUTF8Sequence((const llvm::UTF8 **)&cur_pos,
-                                     (const llvm::UTF8 *)remainder.end(),
-                                     &CodePoint, llvm::strictConversion);
-  if (Status == llvm::conversionOK &&
-      isValidIdentifierStartCodePoint(CodePoint)) {
-    unsigned utf_length = 1;
-    unsigned length = size;
-    while (true) {
-      size = llvm::getNumBytesForUTF8(*cur_pos);
-      Status = llvm::convertUTF8Sequence((const llvm::UTF8 **)&cur_pos,
-                                         (const llvm::UTF8 *)remainder.end(),
-                                         &CodePoint, llvm::strictConversion);
-      if (Status != llvm::conversionOK ||
-          !isValidIdentifierContinuationCodePoint(CodePoint))
-        break;
-      utf_length++;
-      length += size;
-    }
-
-    remainder = remainder.drop_front(length);
-    llvm::StringRef utf_token(start, length);
-    auto token = Token(Token::identifier, utf_token.str(), position);
-    position += utf_length;
-    return token;
   }
 
   // Unrecognized character(s) in string; unable to lex it.

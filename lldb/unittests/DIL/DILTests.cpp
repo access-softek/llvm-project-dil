@@ -3683,7 +3683,8 @@ TEST_F(EvalTest, DISABLED_TestStringParsing) {
 
 TEST_F(EvalTest, TestUnicodeIdentifiers) {
   EXPECT_THAT(Eval("フー + 1"), IsEqual("2"));
-  EXPECT_THAT(Eval("1 + フー"), IsEqual("2"));
+  EXPECT_THAT(Eval("2 + フー"), IsEqual("3"));
+  EXPECT_THAT(Eval("föo + 1"), IsEqual("4"));
   EXPECT_THAT(Eval("фу + бар"),
               IsError("<expr:1:6>: use of undeclared identifier 'бар'\n"
                       "фу + бар\n"

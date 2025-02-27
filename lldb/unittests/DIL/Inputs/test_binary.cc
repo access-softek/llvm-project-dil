@@ -1200,6 +1200,7 @@ static void TestUnicodeIdentifiers() {
   int フー = 1;
   int фу = 2;
   int föo = 3;
+  int שלום = 4;
   // BREAK(TestUnicodeIdentifiers)
 }
 

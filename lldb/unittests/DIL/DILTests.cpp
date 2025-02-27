@@ -3685,6 +3685,7 @@ TEST_F(EvalTest, TestUnicodeIdentifiers) {
   EXPECT_THAT(Eval("フー + 1"), IsEqual("2"));
   EXPECT_THAT(Eval("1 + フー"), IsEqual("2"));
   EXPECT_THAT(Eval("föo + 1"), IsEqual("4"));
+  EXPECT_THAT(Eval("שלום + 1"), IsEqual("5"));
   EXPECT_THAT(Eval(" 1　+   föo   "),
               IsEqual("4")); // Contains Unicode whitespaces
   EXPECT_THAT(Eval("фу + бар"),

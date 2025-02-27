@@ -1831,10 +1831,10 @@ TEST_F(EvalTest, TestStaticConstDeclaredInline) {
   EXPECT_THAT(Eval("outer::Vars::inline_static"), IsEqual("4.5"));
   EXPECT_THAT(Eval("outer::Vars::static_constexpr"), IsEqual("5"));
 
-  EXPECT_THAT(Eval("::Vars::inline_static"), XFail(IsEqual("7.5")));
-  EXPECT_THAT(Eval("::Vars::static_constexpr"), XFail(IsEqual("8")));
-  EXPECT_THAT(Eval("Vars::inline_static"), XFail(IsEqual("7.5")));
-  EXPECT_THAT(Eval("Vars::static_constexpr"), XFail(IsEqual("8")));
+  EXPECT_THAT(Eval("::Vars::inline_static"), IsEqual("7.5"));
+  EXPECT_THAT(Eval("::Vars::static_constexpr"), IsEqual("8"));
+  EXPECT_THAT(Eval("Vars::inline_static"), IsEqual("7.5"));
+  EXPECT_THAT(Eval("Vars::static_constexpr"), IsEqual("8"));
 }
 
 #ifndef __EMSCRIPTEN__
@@ -1858,16 +1858,16 @@ TEST_F(EvalTest, TestStaticConstDeclaredOutsideTheClass) {
   EXPECT_THAT(Eval("outer::inner::Vars::static_const"), IsEqual("3"));
   EXPECT_THAT(Eval("::outer::Vars::static_const"), IsEqual("6"));
   EXPECT_THAT(Eval("outer::Vars::static_const"), IsEqual("6"));
-  EXPECT_THAT(Eval("::Vars::static_const"), XFail(IsEqual("9")));
-  EXPECT_THAT(Eval("Vars::static_const"), XFail(IsEqual("9")));
+  EXPECT_THAT(Eval("::Vars::static_const"), IsEqual("9"));
+  EXPECT_THAT(Eval("Vars::static_const"), IsEqual("9"));
 
   EXPECT_THAT(Eval("::outer::inner::Vars::Nested::static_const"),
               IsEqual("10"));
   EXPECT_THAT(Eval("outer::inner::Vars::Nested::static_const"), IsEqual("10"));
   EXPECT_THAT(Eval("::outer::Vars::Nested::static_const"), IsEqual("20"));
   EXPECT_THAT(Eval("outer::Vars::Nested::static_const"), IsEqual("20"));
-  EXPECT_THAT(Eval("::Vars::Nested::static_const"), XFail(IsEqual("30")));
-  EXPECT_THAT(Eval("Vars::Nested::static_const"), XFail(IsEqual("30")));
+  EXPECT_THAT(Eval("::Vars::Nested::static_const"), IsEqual("30"));
+  EXPECT_THAT(Eval("Vars::Nested::static_const"), IsEqual("30"));
 }
 
 #ifndef __EMSCRIPTEN__
@@ -2069,8 +2069,8 @@ TEST_F(EvalTest, TestTemplateTypes) {
   EXPECT_THAT(
       Eval("ns::T_1<ns::T_1<int> >::cx"),
       IsError("use of undeclared identifier 'ns::T_1<ns::T_1<int> >::cx'"));
-  EXPECT_THAT(Eval("T_1<int>::cx"), XFail(IsEqual("24")));
-  EXPECT_THAT(Eval("T_1<double>::cx"), XFail(IsEqual("42")));
+  EXPECT_THAT(Eval("T_1<int>::cx"), IsEqual("24"));
+  EXPECT_THAT(Eval("T_1<double>::cx"), IsEqual("42"));
   EXPECT_THAT(Eval("ns::T_1<int>::cx"), IsEqual("64"));
 
   for (std::string arg : {"int", "int*", "int**", "int&", "int*&"}) {
@@ -2114,7 +2114,7 @@ TEST_F(EvalTest, TestTemplateCpp11) {
   EXPECT_THAT(Eval("T_1<2>>1"),
               IsError("<expr:1:7>: Unexpected token: <'>' (greater)>"));
   // And here it's a template.
-  EXPECT_THAT(Eval("T_1<int>::cx + 1"), XFail(IsEqual("25")));
+  EXPECT_THAT(Eval("T_1<int>::cx + 1"), IsEqual("25"));
 }
 
 TEST_F(EvalTest, TestTemplateWithNumericArguments) {

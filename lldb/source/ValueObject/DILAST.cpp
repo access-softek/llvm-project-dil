@@ -305,7 +305,8 @@ LookupStaticIdentifier(lldb::TargetSP target_sp,
   // later.
   VariableList variable_list;
   ConstString name(name_ref);
-  target_sp->GetImages().FindGlobalVariables(name, 1, variable_list);
+  target_sp->GetImages().FindGlobalVariables(
+      name, std::numeric_limits<uint32_t>::max(), variable_list);
   if (!variable_list.Empty()) {
     ExecutionContextScope *exe_scope = target_sp->GetProcessSP().get();
     if (exe_scope == nullptr)

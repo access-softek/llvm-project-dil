@@ -3382,25 +3382,23 @@ TEST_F(EvalTest, TestTypeComparison) {
   // This test is for border-case situations in the CompareTypes function.
 
   // Taking an address of ternary expression require operands of the same type.
+  EXPECT_THAT(Eval("&(true ? i : mi)"), IsOk());
   EXPECT_THAT(Eval("&(true ? ip : icpc)"), IsOk());
-  EXPECT_THAT(Eval("&(true ? mipp : ipp)"),
-              XFail(IsOk(/*compare_types*/ false)));
+  EXPECT_THAT(Eval("&(true ? mipp : ipp)"), IsOk(/*compare_types*/ false));
   EXPECT_THAT(Eval("&(true ? ipp : icpcpc)"), IsOk());
-  EXPECT_THAT(Eval("&(true ? ipp : mipp)"), XFail(IsOk()));
+  EXPECT_THAT(Eval("&(true ? ipp : mipp)"), IsOk());
   EXPECT_THAT(Eval("&(true ? ipp : micpcpc)"), IsOk());
   // TODO: Enable type comparison once the type mismatch is fixed.
   // LLDB results in "int ***", while lldb-eval results in "MyInt ***".
-  EXPECT_THAT(Eval("&(true ? mipp : icpcpc)"),
-              XFail(IsOk(/*compare_types*/ false)));
-  EXPECT_THAT(Eval("&(true ? mipp : micpcpc)"),
-              XFail(IsOk(/*compare_types*/ false)));
+  EXPECT_THAT(Eval("&(true ? mipp : icpcpc)"), IsOk(/*compare_types*/ false));
+  EXPECT_THAT(Eval("&(true ? mipp : micpcpc)"), IsOk(/*compare_types*/ false));
   EXPECT_THAT(Eval("&(true ? icpcpc : micpcpc)"), IsOk());
 
   // Ensure that "signed char" and "char" are different types.
   EXPECT_THAT(Eval("true ? c : sc"), IsEqual("2")); // int
   EXPECT_THAT(Eval("true ? sc : (signed char)67"), IsEqual("'A'"));
   EXPECT_THAT(Eval("true ? (char)66 : (signed char)65"), IsEqual("66"));
-  EXPECT_THAT(Eval("true ? cc : mc"), XFail(IsEqual("'B'")));
+  EXPECT_THAT(Eval("true ? cc : mc"), IsEqual("'B'"));
   EXPECT_THAT(Eval("true ? cc : sc"), IsEqual("66"));
   EXPECT_THAT(Eval("true ? sc : mc"), IsEqual("65"));
   EXPECT_THAT(Eval("&(true ? c : c)"), IsOk());

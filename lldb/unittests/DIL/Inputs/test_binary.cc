@@ -1098,6 +1098,7 @@ void TestTypeComparison() {
 
   using MyInt = int;
   using MyPtr = MyInt *;
+  MyInt mi = 2;
   MyPtr *mipp = ipp;
 
   using MyConstInt = const int;

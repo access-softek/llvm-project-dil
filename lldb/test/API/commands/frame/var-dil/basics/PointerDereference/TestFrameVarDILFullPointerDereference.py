@@ -49,8 +49,8 @@ class TestFrameVarDILPointerDereference(TestBase):
         self.assertEqual(
             len(threads), 1, "There should be a thread stopped at our breakpoint"
         )
-       # The hit count for the breakpoint should be 1.
-        self.assertEquals(breakpoint.GetHitCount(), 1)
+        # The hit count for the breakpoint should be 1.
+        self.assertEqual(breakpoint.GetHitCount(), 1)
 
         frame = threads[0].GetFrameAtIndex(0)
         command_result = lldb.SBCommandReturnObject()
@@ -58,8 +58,8 @@ class TestFrameVarDILPointerDereference(TestBase):
 
         # Tests
 
-        #self.expect("settings set target.experimental.use-DIL true",
-        #            substrs=[""])
+        self.expect("settings set target.experimental.use-DIL true",
+                    substrs=[""])
         self.expect("frame variable '*p_int0'", substrs=["0"])
         self.expect("frame variable '*p_int0 + 1'", substrs=["1"])
         self.expect("frame variable '*cp_int5'", substrs=["5"])

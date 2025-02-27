@@ -136,6 +136,7 @@ class Token {
       m_kind(kind), m_spelling(std::move(spelling)), m_start_pos(start) {}
 
   Kind GetKind() const { return m_kind; }
+  void SetKind(Kind kind) { m_kind = kind; }
 
   std::string GetSpelling() const { return m_spelling; }
 
@@ -176,7 +177,7 @@ class DILLexer {
   static llvm::Expected<DILLexer> Create(llvm::StringRef expr);
 
   /// Return the current token to be handled by the DIL parser.
-  const Token& GetCurrentToken() { return m_lexed_tokens[m_tokens_idx]; }
+  Token &GetCurrentToken() { return m_lexed_tokens[m_tokens_idx]; }
 
   /// Advance the current token position by N.
   void Advance(uint32_t N = 1) {

@@ -16,6 +16,7 @@
 //#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/ConvertUTF.h"
+#include "llvm/Support/Unicode.h"
 #include "llvm/Support/UnicodeCharRanges.h"
 #include <tuple>
 
@@ -355,15 +356,17 @@ llvm::Expected<DILLexer> DILLexer::Create(llvm::StringRef expr) {
 llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
                                     llvm::StringRef &remainder,
                                     uint32_t &position) {
-  llvm::StringRef::iterator cur_pos = remainder.begin();
+  llvm::StringRef::iterator start = remainder.begin();
   SkipWhitespaces(remainder);
-  position += remainder.begin() - cur_pos;
+  if (start < remainder.begin()) {
+    llvm::StringRef skipped(start, remainder.begin() - start);
+    position += llvm::sys::unicode::columnWidthUTF8(skipped);
+  }
 
   // Check to see if we've reached the end of our input string.
   if (remainder.empty())
     return Token(Token::eof, "", position);
 
-  cur_pos = remainder.begin();
   std::optional<llvm::StringRef> maybe_number = IsNumber(expr, remainder);
   if (maybe_number) {
     std::string number = (*maybe_number).str();

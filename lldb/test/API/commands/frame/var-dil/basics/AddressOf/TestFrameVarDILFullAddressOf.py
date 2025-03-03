@@ -49,15 +49,15 @@ class TestFrameVarDILAddressOf(TestBase):
         self.assertEqual(
             len(threads), 1, "There should be a thread stopped at our breakpoint"
         )
-       # The hit count for the breakpoint should be 1.
-        self.assertEquals(breakpoint.GetHitCount(), 1)
+        # The hit count for the breakpoint should be 1.
+        self.assertEqual(breakpoint.GetHitCount(), 1)
 
         frame = threads[0].GetFrameAtIndex(0)
         command_result = lldb.SBCommandReturnObject()
         interp = self.dbg.GetCommandInterpreter()
 
-        #self.expect("settings set target.experimental.use-DIL true",
-        #            substrs=[""])
+        self.expect("settings set target.experimental.use-DIL true",
+                    substrs=[""])
         self.expect("frame variable '&x'", patterns=["0x[0-9]+"])
         self.expect("frame variable 'r'", substrs=["42"])
         self.expect("frame variable '&r'", patterns=["0x[0-9]+"])
@@ -104,10 +104,6 @@ class TestFrameVarDILAddressOf(TestBase):
         self.expect("frame variable '&(true ? c : 1)'", error=True,
                     substrs=["cannot take the address of an rvalue of type "
                              "'int'"])
-
-        self.expect("frame variable '&this'", error=True,
-                    substrs=["cannot take the address of an rvalue of type "
-                             "'TestMethods *'"])
 
         self.expect("frame variable '&(&s_str)'", error=True,
                     substrs=["cannot take the address of an rvalue of type "

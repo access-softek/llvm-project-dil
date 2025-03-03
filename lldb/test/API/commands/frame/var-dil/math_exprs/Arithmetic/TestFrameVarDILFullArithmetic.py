@@ -49,15 +49,15 @@ class TestFrameVarDILArithmetic(TestBase):
         self.assertEqual(
             len(threads), 1, "There should be a thread stopped at our breakpoint"
         )
-       # The hit count for the breakpoint should be 1.
-        self.assertEquals(breakpoint.GetHitCount(), 1)
+        # The hit count for the breakpoint should be 1.
+        self.assertEqual(breakpoint.GetHitCount(), 1)
 
         frame = threads[0].GetFrameAtIndex(0)
         command_result = lldb.SBCommandReturnObject()
         interp = self.dbg.GetCommandInterpreter()
 
-        #self.expect("settings set target.experimental.use-DIL true",
-        #            substrs=[""])
+        self.expect("settings set target.experimental.use-DIL true",
+                    substrs=[""])
         self.expect("frame variable a", substrs=["1"])
         self.expect("frame variable 'a + c'", substrs=["11"])
 
@@ -81,7 +81,7 @@ class TestFrameVarDILArithmetic(TestBase):
                     substrs=["4294967295"])
         self.expect("frame variable '4294967295 + 1'",
                     substrs=["4294967296"])
-#        self.expect("frame variable '4294967295U + 1'", substrs=["0"])
+        self.expect("frame variable '4294967295U + 1'", substrs=["0"])
 
         # Note: Signed overflow is UB.
         self.expect("frame variable 'll_max + 1'",
@@ -98,10 +98,10 @@ class TestFrameVarDILArithmetic(TestBase):
                     substrs=["18446744073709551615"])
         self.expect("frame variable '9223372036854775807 + 1'",
                     substrs=["-9223372036854775808"])
-#        self.expect("frame variable '9223372036854775807LL + 1'",
-#                    substrs=["-9223372036854775808"])
-#        self.expect("frame variable '18446744073709551615ULL + 1'",
-#                    substrs=["0"])
+        self.expect("frame variable '9223372036854775807LL + 1'",
+                    substrs=["-9223372036854775808"])
+        self.expect("frame variable '18446744073709551615ULL + 1'",
+                    substrs=["0"])
 
         # Integer literal is too large to be represented in a signed integer
         # type, interpreting as unsigned.
@@ -111,16 +111,16 @@ class TestFrameVarDILArithmetic(TestBase):
                     substrs=["9223372036854775807"])
         self.expect("frame variable -- '-9223372036854775808 + 1'",
                     substrs=["9223372036854775809"])
-#        self.expect("frame variable -- '-9223372036854775808LL / -1'",
-#                    substrs=["0"])
-#        self.expect("frame variable -- '-9223372036854775808LL % -1'",
-#                    substrs=["9223372036854775808"])
+        self.expect("frame variable -- '-9223372036854775808LL / -1'",
+                    substrs=["0"])
+        self.expect("frame variable -- '-9223372036854775808LL % -1'",
+                    substrs=["9223372036854775808"])
 
-#        self.expect("frame variable -- '-20 / 1U'",
-#                    substrs=["4294967276"])
-#        self.expect("frame variable -- '-20LL / 1U'", substrs=["-20"])
-#        self.expect("frame variable -- '-20LL / 1ULL'",
-#                    substrs=["18446744073709551596"])
+        self.expect("frame variable -- '-20 / 1U'",
+                    substrs=["4294967276"])
+        self.expect("frame variable -- '-20LL / 1U'", substrs=["-20"])
+        self.expect("frame variable -- '-20LL / 1ULL'",
+                    substrs=["18446744073709551596"])
 
         # Unary arithmetic.
         self.expect("frame variable '+0'", substrs=["0"])
@@ -146,16 +146,16 @@ class TestFrameVarDILArithmetic(TestBase):
         self.expect("frame variable '1 / -0.0'", substrs=["-Inf"])
         self.expect("frame variable '+0.0 / +0.0  != +0.0 / +0.0'",
                     substrs=["true"])
-#        self.expect("frame variable -- '-1.f * 0'", substrs=["-0"])
-#        self.expect("frame variable '0x0.123p-1'",
-#                    substrs=["0.0355224609375"])
+        self.expect("frame variable -- '-1.f * 0'", substrs=["-0"])
+        self.expect("frame variable '0x0.123p-1'",
+                    substrs=["0.0355224609375"])
 
-#        self.expect("frame variable 'fnan < fnan'", substrs=["false"])
-#        self.expect("frame variable 'fnan == fnan'", substrs=["false"])
+        self.expect("frame variable 'fnan < fnan'", substrs=["false"])
+        self.expect("frame variable 'fnan == fnan'", substrs=["false"])
         self.expect("frame variable '(unsigned int) fdenorm'",
                     substrs=["0"])
-#        self.expect("frame variable '(unsigned int) (1.0f + fdenorm)'",
-#                    substrs=["1"])
+        self.expect("frame variable '(unsigned int) (1.0f + fdenorm)'",
+                    substrs=["1"])
 
         # Invalid remainder.
         self.expect("frame variable '1.1 % 2'", error=True,
@@ -164,9 +164,9 @@ class TestFrameVarDILArithmetic(TestBase):
 
         #  References and typedefs.
         self.expect("frame variable 'r + 1'", substrs=["3"])
-#        self.expect("frame variable 'r - 1l'", substrs=["1"])
-#        self.expect("frame variable 'r * 2u'", substrs=["4"])
-#        self.expect("frame variable 'r / 2ull'", substrs=["1"])
+        self.expect("frame variable 'r - 1l'", substrs=["1"])
+        self.expect("frame variable 'r * 2u'", substrs=["4"])
+        self.expect("frame variable 'r / 2ull'", substrs=["1"])
         self.expect("frame variable 'my_r + 1'", substrs=["3"])
         self.expect("frame variable 'my_r - 1'", substrs=["1"])
         self.expect("frame variable 'my_r * 2'", substrs=["4"])

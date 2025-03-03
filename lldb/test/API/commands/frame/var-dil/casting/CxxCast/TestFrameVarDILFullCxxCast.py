@@ -49,13 +49,15 @@ class TestFrameVarDILArithmetic(TestBase):
         self.assertEqual(
             len(threads), 1, "There should be a thread stopped at our breakpoint"
         )
-       # The hit count for the breakpoint should be 1.
-        self.assertEquals(breakpoint.GetHitCount(), 1)
+        # The hit count for the breakpoint should be 1.
+        self.assertEqual(breakpoint.GetHitCount(), 1)
 
         frame = threads[0].GetFrameAtIndex(0)
         command_result = lldb.SBCommandReturnObject()
         interp = self.dbg.GetCommandInterpreter()
 
+        self.expect("settings set target.experimental.use-DIL true",
+                  substrs=[""])
 
         # TestCxxStaticCast
 
@@ -96,7 +98,7 @@ class TestFrameVarDILArithmetic(TestBase):
         self.expect("frame variable 'static_cast<UEnum>(s_enum)'", substrs=["kUOne"])
         self.expect("frame variable 'static_cast<UEnum>(2.1)'", substrs=["kUTwo"])
         self.expect("frame variable 'static_cast<SEnum>(true)'", substrs=["kSOne"])
-#        self.expect("frame variable 'static_cast<SEnum>(0.4f)'", substrs=["kSZero"])
+        self.expect("frame variable 'static_cast<SEnum>(0.4f)'", substrs=["kSZero"])
         self.expect("frame variable 'static_cast<SEnum>(td_senum)'", substrs=["kSOne"])
         self.expect("frame variable 'static_cast<td_senum_t>(UEnum::kUOne)'", substrs=["kSOne"])
 
@@ -324,7 +326,7 @@ class TestFrameVarDILArithmetic(TestBase):
             len(threads), 1, "There should be a thread stopped at our breakpoint"
         )
         # The hit count for the breakpoint should be 2.
-        self.assertEquals(breakpoint.GetHitCount(), 2)
+        self.assertEqual(breakpoint.GetHitCount(), 2)
 
         # LLDB doesn't support `dynamic_cast` in the expression evaluator.
         ##this->compare_with_lldb_ = false;

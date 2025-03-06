@@ -986,16 +986,16 @@ TEST_F(EvalTest, TestLocalVariables) {
 
 TEST_F(EvalTest, TestMemberOf) {
   EXPECT_THAT(Eval("s.x"), IsEqual("1"));
-  EXPECT_THAT(Eval("s.r"), XFail(IsEqual("2")));
+  EXPECT_THAT(Eval("s.r"), IsEqual("2"));
   EXPECT_THAT(Eval("s.r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("sr.x"), IsEqual("1"));
-  EXPECT_THAT(Eval("sr.r"), XFail(IsEqual("2")));
+  EXPECT_THAT(Eval("sr.r"), IsEqual("2"));
   EXPECT_THAT(Eval("sr.r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("sp->x"), IsEqual("1"));
-  EXPECT_THAT(Eval("sp->r"), XFail(IsEqual("2")));
+  EXPECT_THAT(Eval("sp->r"), IsEqual("2"));
   EXPECT_THAT(Eval("sp->r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("sarr->x"), IsEqual("5"));
-  EXPECT_THAT(Eval("sarr->r"), XFail(IsEqual("2")));
+  EXPECT_THAT(Eval("sarr->r"), IsEqual("2"));
   EXPECT_THAT(Eval("sarr->r + 1"), IsEqual("3"));
   EXPECT_THAT(Eval("(sarr + 1)->x"), IsEqual("1"));
 
@@ -1571,11 +1571,11 @@ TEST_F(EvalTest, TestCxxStaticCast) {
 
   // Cast to nullptr.
   EXPECT_THAT(Eval("static_cast<nullptr_t>((int)0)"),
-              IsError("static_cast from 'int' to 'nullptr_t' (canonically "
+              IsError("static_cast from 'int' to 'std::__1::nullptr_t' (canonically "
                       "referred to as 'std::nullptr_t')"
                       " is not allowed"));
   EXPECT_THAT(Eval("static_cast<nullptr_t>((void*)0)"),
-              IsError("static_cast from 'void *' to 'nullptr_t' (canonically "
+              IsError("static_cast from 'void *' to 'std::__1::nullptr_t' (canonically "
                       "referred to as 'std::nullptr_t')"
                       " is not allowed"));
 
@@ -1797,18 +1797,17 @@ TEST_F(EvalTest, TestCxxReinterpretCast) {
       Eval("reinterpret_cast<void*>(nullptr)"),
       IsError("reinterpret_cast from 'std::nullptr_t' to 'void *' is not "
               "allowed"));
-  GTEST_SKIP() << "Unknown error string mismatch";
   EXPECT_THAT(
       Eval("reinterpret_cast<nullptr_t>(ptr)"),
-      IsError("reinterpret_cast from 'int *' to 'nullptr_t' "
+      IsError("reinterpret_cast from 'int *' to 'std::__1::nullptr_t' "
               "(canonically referred to as 'std::nullptr_t') is not allowed"));
   EXPECT_THAT(
       Eval("reinterpret_cast<nullptr_t>(0)"),
-      IsError("reinterpret_cast from 'int' to 'nullptr_t' "
+      IsError("reinterpret_cast from 'int' to 'std::__1::nullptr_t' "
               "(canonically referred to as 'std::nullptr_t') is not allowed"));
   EXPECT_THAT(
       Eval("reinterpret_cast<nullptr_t>(nullptr)"),
-      IsError("reinterpret_cast from 'std::nullptr_t' to 'nullptr_t' "
+      IsError("reinterpret_cast from 'std::nullptr_t' to 'std::__1::nullptr_t' "
               "(canonically referred to as 'std::nullptr_t') is not allowed"));
 }
 
@@ -1832,10 +1831,10 @@ TEST_F(EvalTest, TestStaticConstDeclaredInline) {
   EXPECT_THAT(Eval("outer::Vars::inline_static"), IsEqual("4.5"));
   EXPECT_THAT(Eval("outer::Vars::static_constexpr"), IsEqual("5"));
 
-  EXPECT_THAT(Eval("::Vars::inline_static"), XFail(IsEqual("7.5")));
-  EXPECT_THAT(Eval("::Vars::static_constexpr"), XFail(IsEqual("8")));
-  EXPECT_THAT(Eval("Vars::inline_static"), XFail(IsEqual("7.5")));
-  EXPECT_THAT(Eval("Vars::static_constexpr"), XFail(IsEqual("8")));
+  EXPECT_THAT(Eval("::Vars::inline_static"), IsEqual("7.5"));
+  EXPECT_THAT(Eval("::Vars::static_constexpr"), IsEqual("8"));
+  EXPECT_THAT(Eval("Vars::inline_static"), IsEqual("7.5"));
+  EXPECT_THAT(Eval("Vars::static_constexpr"), IsEqual("8"));
 }
 
 #ifndef __EMSCRIPTEN__
@@ -1859,16 +1858,16 @@ TEST_F(EvalTest, TestStaticConstDeclaredOutsideTheClass) {
   EXPECT_THAT(Eval("outer::inner::Vars::static_const"), IsEqual("3"));
   EXPECT_THAT(Eval("::outer::Vars::static_const"), IsEqual("6"));
   EXPECT_THAT(Eval("outer::Vars::static_const"), IsEqual("6"));
-  EXPECT_THAT(Eval("::Vars::static_const"), XFail(IsEqual("9")));
-  EXPECT_THAT(Eval("Vars::static_const"), XFail(IsEqual("9")));
+  EXPECT_THAT(Eval("::Vars::static_const"), IsEqual("9"));
+  EXPECT_THAT(Eval("Vars::static_const"), IsEqual("9"));
 
   EXPECT_THAT(Eval("::outer::inner::Vars::Nested::static_const"),
               IsEqual("10"));
   EXPECT_THAT(Eval("outer::inner::Vars::Nested::static_const"), IsEqual("10"));
   EXPECT_THAT(Eval("::outer::Vars::Nested::static_const"), IsEqual("20"));
   EXPECT_THAT(Eval("outer::Vars::Nested::static_const"), IsEqual("20"));
-  EXPECT_THAT(Eval("::Vars::Nested::static_const"), XFail(IsEqual("30")));
-  EXPECT_THAT(Eval("Vars::Nested::static_const"), XFail(IsEqual("30")));
+  EXPECT_THAT(Eval("::Vars::Nested::static_const"), IsEqual("30"));
+  EXPECT_THAT(Eval("Vars::Nested::static_const"), IsEqual("30"));
 }
 
 #ifndef __EMSCRIPTEN__
@@ -2070,8 +2069,8 @@ TEST_F(EvalTest, TestTemplateTypes) {
   EXPECT_THAT(
       Eval("ns::T_1<ns::T_1<int> >::cx"),
       IsError("use of undeclared identifier 'ns::T_1<ns::T_1<int> >::cx'"));
-  EXPECT_THAT(Eval("T_1<int>::cx"), XFail(IsEqual("24")));
-  EXPECT_THAT(Eval("T_1<double>::cx"), XFail(IsEqual("42")));
+  EXPECT_THAT(Eval("T_1<int>::cx"), IsEqual("24"));
+  EXPECT_THAT(Eval("T_1<double>::cx"), IsEqual("42"));
   EXPECT_THAT(Eval("ns::T_1<int>::cx"), IsEqual("64"));
 
   for (std::string arg : {"int", "int*", "int**", "int&", "int*&"}) {
@@ -2115,7 +2114,7 @@ TEST_F(EvalTest, TestTemplateCpp11) {
   EXPECT_THAT(Eval("T_1<2>>1"),
               IsError("<expr:1:7>: Unexpected token: <'>' (greater)>"));
   // And here it's a template.
-  EXPECT_THAT(Eval("T_1<int>::cx + 1"), XFail(IsEqual("25")));
+  EXPECT_THAT(Eval("T_1<int>::cx + 1"), IsEqual("25"));
 }
 
 TEST_F(EvalTest, TestTemplateWithNumericArguments) {

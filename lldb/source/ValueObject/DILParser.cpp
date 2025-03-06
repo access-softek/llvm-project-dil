@@ -12,10 +12,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/ValueObject/DILParser.h"
-
-#include <stdlib.h>
-
+#include "lldb/Target/ExecutionContextScope.h"
+#include "lldb/ValueObject/DILAST.h"
+#include "lldb/ValueObject/DILEval.h"
+#include "lldb/lldb-enumerations.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Support/FormatAdapters.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/TargetParser/Host.h"
 #include <cstdint>
+#include <cstdlib>
+#include <limits.h>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -23,18 +31,6 @@
 #include <tuple>
 #include <type_traits>
 #include <vector>
-
-#include <limits.h>
-
-#include "lldb/lldb-enumerations.h"
-#include "lldb/Target/ExecutionContextScope.h"
-#include "lldb/ValueObject/DILAST.h"
-#include "lldb/ValueObject/DILEval.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/iterator_range.h"
-#include "llvm/Support/FormatAdapters.h"
-#include "llvm/Support/FormatVariadic.h"
-#include "llvm/TargetParser/Host.h"
 
 namespace {
 
@@ -55,29 +51,6 @@ constexpr unsigned type_width() {
 }  // namespace
 
 namespace lldb_private::dil {
-
-inline void TokenKindsJoinImpl(std::ostringstream& os,
-                               Token::Kind k) {
-  os << "'" << Token::GetTokenName(k).str() << "'";
-}
-
-template <typename... Ts>
-inline void TokenKindsJoinImpl(std::ostringstream& os, Token::Kind k,
-                               Ts... ks) {
-  TokenKindsJoinImpl(os, k);
-  os << ", ";
-  TokenKindsJoinImpl(os, ks...);
-}
-
-template <typename... Ts>
-inline std::string TokenKindsJoin(Token::Kind k, Ts... ks) {
-  std::ostringstream os;
-  TokenKindsJoinImpl(os, k, ks...);
-
-  return os.str();
-}
-
-//static std::unordered_map<std::string, CompilerType> context_args;
 
 /// Quick lookup to check if a type name already exists in a
 /// name-to-CompilerType map the DIL parser keeps of previously found
@@ -193,47 +166,13 @@ static bool GetPathToBaseType(CompilerType type, CompilerType target_base,
   return false;
 }
 
-static const char* ToString(TypeDeclaration::TypeSpecifier type_spec) {
-  using TypeSpecifier = TypeDeclaration::TypeSpecifier;
-  switch (type_spec) {
-    case TypeSpecifier::kVoid:       return "void";
-    case TypeSpecifier::kBool:       return "bool";
-    case TypeSpecifier::kChar:       return "char";
-    case TypeSpecifier::kShort:      return "short";
-    case TypeSpecifier::kInt:        return "int";
-    case TypeSpecifier::kLong:       return "long";
-    case TypeSpecifier::kLongLong:   return "long long";
-    case TypeSpecifier::kFloat:      return "float";
-    case TypeSpecifier::kDouble:     return "double";
-    case TypeSpecifier::kLongDouble: return "long double";
-    case TypeSpecifier::kWChar:      return "wchar_t";
-    case TypeSpecifier::kChar16:     return "char16_t";
-    case TypeSpecifier::kChar32:     return "char32_t";
-    default:
-      assert(false && "invalid type specifier");
-      return nullptr;
-  }
-}
-
-static const char* ToString(TypeDeclaration::SignSpecifier sign_spec) {
-  using SignSpecifier = TypeDeclaration::SignSpecifier;
-  switch (sign_spec) {
-    case SignSpecifier::kSigned:   return "signed";
-    case SignSpecifier::kUnsigned: return "unsigned";
-    default:
-      assert(false && "invalid sign specifier");
-      return nullptr;
-  }
-}
-
 static bool TokenEndsTemplateArgumentList(const Token& token) {
   // Note: in C++11 ">>" can be treated as "> >" and thus be a valid token
   // for the template argument list.
-  return token.IsOneOf(Token::comma, Token::greater,
-                       Token::greatergreater);
+  return token.IsOneOf({Token::comma, Token::greater, Token::greatergreater});
 }
 
-static DILASTNodeUP InsertArrayToPointerConversion(DILASTNodeUP expr) {
+static ASTNodeUP InsertArrayToPointerConversion(ASTNodeUP expr) {
   assert(expr->GetDereferencedResultType().IsArrayType() &&
          "an argument to array-to-pointer conversion must be an array");
 
@@ -319,8 +258,9 @@ static CompilerType DoIntegralPromotion(
       : int_type;
 }
 
-static DILASTNodeUP UsualUnaryConversions(
-    std::shared_ptr<ExecutionContextScope>  ctx, DILASTNodeUP expr) {
+static ASTNodeUP
+UsualUnaryConversions(std::shared_ptr<ExecutionContextScope> ctx,
+                      ASTNodeUP expr) {
   // Perform usual conversions for unary operators. At the moment this includes
   // array-to-pointer and the integral promotion for eligible types.
   auto result_type = expr->GetDereferencedResultType();
@@ -429,10 +369,10 @@ static lldb::BasicType BasicTypeToUnsigned(lldb::BasicType basic_type) {
   }
 }
 
-static void PerformIntegerConversions(std::shared_ptr<ExecutionContextScope> ctx,
-                                      DILASTNodeUP& l,
-                                      DILASTNodeUP& r, bool convert_lhs,
-                                      bool convert_rhs) {
+static void
+PerformIntegerConversions(std::shared_ptr<ExecutionContextScope> ctx,
+                          ASTNodeUP &l, ASTNodeUP &r, bool convert_lhs,
+                          bool convert_rhs) {
   // Assert that rank(l) < rank(r).
   auto l_type = l->GetDereferencedResultType();
   auto r_type = r->GetDereferencedResultType();
@@ -470,11 +410,10 @@ static void PerformIntegerConversions(std::shared_ptr<ExecutionContextScope> ctx
   }
 }
 
-static CompilerType UsualArithmeticConversions(
-    std::shared_ptr<ExecutionContextScope> ctx,
-    DILASTNodeUP& lhs,
-    DILASTNodeUP& rhs,
-    bool is_comp_assign = false) {
+static CompilerType
+UsualArithmeticConversions(std::shared_ptr<ExecutionContextScope> ctx,
+                           ASTNodeUP &lhs, ASTNodeUP &rhs,
+                           bool is_comp_assign = false) {
   // Apply unary conversions (e.g. intergal promotion) for both operands.
   // In case of a composite assignment operator LHS shouldn't get promoted.
   if (!is_comp_assign) {
@@ -671,50 +610,182 @@ lldb::BasicType PickCharType(const dil::StringLiteralParser& literal) {
   return lldb::eBasicTypeChar;
 }
 
-std::string FormatDiagnostics(llvm::StringRef text, const std::string& message,
+std::optional<MemberInfo>
+GetFieldWithNameIndexPath(lldb::ValueObjectSP lhs_val_sp, CompilerType type,
+                          const std::string &name, std::vector<uint32_t> *idx,
+                          CompilerType empty_type, bool use_synthetic,
+                          bool is_dynamic, bool is_arrow) {
+  bool is_synthetic = false;
+  // Go through the fields first.
+  uint32_t num_fields = type.GetNumFields();
+  lldb::ValueObjectSP empty_valobj_sp;
+  for (uint32_t i = 0; i < num_fields; ++i) {
+    uint64_t bit_offset = 0;
+    uint32_t bitfield_bit_size = 0;
+    bool is_bitfield = false;
+    std::string name_sstr;
+    CompilerType field_type(type.GetFieldAtIndex(
+        i, name_sstr, &bit_offset, &bitfield_bit_size, &is_bitfield));
+    auto field_name =
+        name_sstr.length() == 0 ? std::optional<std::string>() : name_sstr;
+    if (field_type.IsValid()) {
+      std::optional<uint32_t> size_in_bits;
+      if (is_bitfield)
+        size_in_bits = bitfield_bit_size;
+      struct MemberInfo field = {field_name,   field_type, size_in_bits,
+                                 is_synthetic, is_dynamic, empty_valobj_sp};
+
+      // Name can be null if this is a padding field.
+      if (field.name == name) {
+        if (lhs_val_sp) {
+          lldb::ValueObjectSP child_valobj_sp =
+              lhs_val_sp->GetChildMemberWithName(name);
+          if (child_valobj_sp &&
+              child_valobj_sp->GetName() == ConstString(name))
+            field.val_obj_sp = child_valobj_sp;
+        }
+
+        if (idx) {
+          assert(idx->empty());
+          // Direct base classes are located before fields, so field members
+          // needs to be offset by the number of base classes.
+          idx->push_back(i + type.GetNumberOfNonEmptyBaseClasses());
+        }
+        return field;
+      } else if (field.type.IsAnonymousType()) {
+        // Every member of an anonymous struct is considered to be a member of
+        // the enclosing struct or union. This applies recursively if the
+        // enclosing struct or union is also anonymous.
+
+        assert(!field.name && "Field should be unnamed.");
+
+        std::optional<MemberInfo> field_in_anon_type =
+            GetFieldWithNameIndexPath(lhs_val_sp, field.type, name, idx,
+                                      empty_type, use_synthetic, is_dynamic,
+                                      is_arrow);
+        if (field_in_anon_type) {
+          if (idx) {
+            idx->push_back(i + type.GetNumberOfNonEmptyBaseClasses());
+          }
+          return field_in_anon_type.value();
+        }
+      }
+    }
+  }
+
+  // LLDB can't access inherited fields of anonymous struct members.
+  if (type.IsAnonymousType()) {
+    return {};
+  }
+
+  // Go through the base classes and look for the field there.
+  uint32_t num_non_empty_bases = 0;
+  uint32_t num_direct_bases = type.GetNumDirectBaseClasses();
+  for (uint32_t i = 0; i < num_direct_bases; ++i) {
+    uint32_t bit_offset;
+    auto base = type.GetDirectBaseClassAtIndex(i, &bit_offset);
+    auto field =
+        GetFieldWithNameIndexPath(lhs_val_sp, base, name, idx, empty_type,
+                                  use_synthetic, is_dynamic, is_arrow);
+    if (field) {
+      if (idx) {
+        idx->push_back(num_non_empty_bases);
+      }
+      return field.value();
+    }
+    if (base.GetNumFields() > 0) {
+      num_non_empty_bases += 1;
+    }
+  }
+
+  // Check for synthetic member
+  if (lhs_val_sp && use_synthetic) {
+    lldb::ValueObjectSP child_valobj_sp = lhs_val_sp->GetSyntheticValue();
+    if (child_valobj_sp) {
+      is_synthetic = true;
+      uint32_t child_idx = child_valobj_sp->GetIndexOfChildWithName(name);
+      child_valobj_sp = child_valobj_sp->GetChildMemberWithName(name);
+      if (child_valobj_sp) {
+        CompilerType field_type = child_valobj_sp->GetCompilerType();
+        if (field_type.IsValid()) {
+          struct MemberInfo field = {name,         field_type, {},
+                                     is_synthetic, is_dynamic, child_valobj_sp};
+          if (idx) {
+            assert(idx->empty());
+            idx->push_back(child_idx);
+          }
+          return field;
+        }
+      }
+    }
+  }
+
+  if (lhs_val_sp) {
+    lldb::ValueObjectSP dynamic_val_sp =
+        lhs_val_sp->GetDynamicValue(lldb::eDynamicDontRunTarget);
+    if (dynamic_val_sp) {
+      CompilerType lhs_type = dynamic_val_sp->GetCompilerType();
+      if (lhs_type.IsPointerType())
+        lhs_type = lhs_type.GetPointeeType();
+      is_dynamic = true;
+      return GetFieldWithNameIndexPath(dynamic_val_sp, lhs_type, name, idx,
+                                       empty_type, use_synthetic, is_dynamic,
+                                       is_arrow);
+    }
+  }
+
+  return {};
+}
+
+std::tuple<std::optional<MemberInfo>, std::vector<uint32_t>>
+GetMemberInfo(lldb::ValueObjectSP lhs_val_sp, CompilerType type,
+              const std::string &name, bool use_synthetic, bool is_arrow) {
+  std::vector<uint32_t> idx;
+  CompilerType empty_type;
+  bool is_dynamic = false;
+  std::optional<MemberInfo> member =
+      GetFieldWithNameIndexPath(lhs_val_sp, type, name, &idx, empty_type,
+                                use_synthetic, is_dynamic, is_arrow);
+  std::reverse(idx.begin(), idx.end());
+  return {member, std::move(idx)};
+}
+
+std::string FormatDiagnostics(llvm::StringRef text, const std::string &message,
                               uint32_t loc) {
-  // Get the location of the current token.
-  size_t loc_offset = (size_t) loc;
-
-  // Look for the start of the line.
-  size_t line_start = text.rfind('\n', loc_offset);
-  line_start = line_start == llvm::StringRef::npos ? 0 : line_start + 1;
-
-  // Look for the end of the line.
-  size_t line_end = text.find('\n', loc_offset);
-  line_end = line_end == llvm::StringRef::npos ? text.size() : line_end;
-
-  // Get a view of the current line in the source code and the position of the
-  // diagnostics pointer.
-  llvm::StringRef line = text.slice(line_start, line_end);
+  // Get the position, in the current line of text, of the diagnostics pointer.
+  // ('loc' is the location of the start of the current token/error within the
+  // overall text line).
   int32_t arrow = loc + 1; // Column offset starts at 1, not 0.
 
-  // Calculate the padding in case we point outside of the expression (this can
-  // happen if the parser expected something, but got EOF).˚
-  size_t expr_rpad = std::max(0, arrow - static_cast<int32_t>(line.size()));
-  size_t arrow_rpad = std::max(0, static_cast<int32_t>(line.size()) - arrow);
+  return llvm::formatv("<expr:1:{0}>: {1}\n{2}\n{3}", loc + 1, message,
+                       llvm::fmt_pad(text, 0, 0),
+                       llvm::fmt_pad("^", arrow - 1, 0));
+}
 
-  return llvm::formatv("<expr:1:{0}>: {1}\n{2}\n{3}", loc + 1,
-                       message, llvm::fmt_pad(line, 0, expr_rpad),
-                       llvm::fmt_pad("^", arrow - 1, arrow_rpad));
+llvm::Expected<ASTNodeUP>
+DILParser::Parse(llvm::StringRef dil_input_expr, DILLexer lexer,
+                 std::shared_ptr<StackFrame> frame_sp,
+                 lldb::DynamicValueType use_dynamic, bool use_synthetic,
+                 bool fragile_ivar, bool check_ptr_vs_member) {
+  Status error;
+  DILParser parser(dil_input_expr, lexer, frame_sp, use_dynamic, use_synthetic,
+                   fragile_ivar, check_ptr_vs_member, error);
+  return parser.Run();
 }
 
 DILParser::DILParser(llvm::StringRef dil_input_expr, DILLexer lexer,
-                     std::shared_ptr<ExecutionContextScope> exe_ctx_scope,
+                     std::shared_ptr<StackFrame> frame_sp,
                      lldb::DynamicValueType use_dynamic, bool use_synthetic,
-                     bool fragile_ivar, bool check_ptr_vs_member)
-    : m_ctx_scope(exe_ctx_scope), m_input_expr(dil_input_expr),
-    m_dil_lexer(lexer), m_dil_token(lexer.GetCurrentToken()),
-    m_use_dynamic(use_dynamic),
-    m_use_synthetic(use_synthetic), m_fragile_ivar(fragile_ivar),
-    m_check_ptr_vs_member(check_ptr_vs_member)
-{
-}
+                     bool fragile_ivar, bool check_ptr_vs_member, Status &error)
+    : m_ctx_scope(frame_sp), m_input_expr(dil_input_expr), m_dil_lexer(lexer),
+      m_error(error), m_use_dynamic(use_dynamic),
+      m_use_synthetic(use_synthetic), m_fragile_ivar(fragile_ivar),
+      m_check_ptr_vs_member(check_ptr_vs_member) {}
 
-DILASTNodeUP DILParser::Run(Status& error) {
-  DILASTNodeUP expr;
+llvm::Expected<ASTNodeUP> DILParser::Run() {
+  ASTNodeUP expr;
 
-  if (m_dil_lexer.IsStringLiteral(m_dil_token.GetKind()) &&
+  if (m_dil_lexer.IsStringLiteral(CurToken().GetKind()) &&
       m_dil_lexer.LookAhead(1).Is(Token::eof)) {
     // A special case to handle a single string-literal token.
     expr = ParseStringLiteral();
@@ -722,19 +793,12 @@ DILASTNodeUP DILParser::Run(Status& error) {
     expr = ParseExpression();
   }
 
-
   Expect(Token::eof);
 
-  error = std::move(m_error);
-  m_error.Clear();
+  // Check for any parsing errors.
+  if (m_error.Fail())
+    return m_error.ToError();
 
-  // Explicitly return ErrorNode if there was an error during the parsing.
-  // Some routines raise an error, but don't change the return value (e.g.
-  // Expect).
-  if (error.Fail()) {
-    CompilerType bad_type;
-    return std::make_unique<ErrorNode>(bad_type);
-  }
   return expr;
 }
 
@@ -773,20 +837,19 @@ CompilerType DILParser::ResolveTypeDeclarators(
 }
 
 bool DILParser::IsSimpleTypeSpecifierKeyword(Token token) const {
-  return token.IsOneOf(
-      Token::kw_char, Token::kw_char16_t, Token::kw_char32_t,
-      Token::kw_wchar_t, Token::kw_bool, Token::kw_short,
-      Token::kw_int, Token::kw_long, Token::kw_signed,
-      Token::kw_unsigned, Token::kw_float, Token::kw_double,
-      Token::kw_void);
+  return token.IsOneOf({Token::kw_char, Token::kw_char16_t, Token::kw_char32_t,
+                        Token::kw_wchar_t, Token::kw_bool, Token::kw_short,
+                        Token::kw_int, Token::kw_long, Token::kw_signed,
+                        Token::kw_unsigned, Token::kw_float, Token::kw_double,
+                        Token::kw_void});
 }
 
 bool DILParser::IsCvQualifier(Token token) const {
-  return token.IsOneOf(Token::kw_const, Token::kw_volatile);
+  return token.IsOneOf({Token::kw_const, Token::kw_volatile});
 }
 
 bool DILParser::IsPtrOperator(Token token) const {
-  return token.IsOneOf(Token::star, Token::amp);
+  return token.IsOneOf({Token::star, Token::amp});
 }
 
 bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
@@ -794,8 +857,8 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
   using SignSpecifier = TypeDeclaration::SignSpecifier;
 
   TypeSpecifier type_spec = type_decl->m_type_specifier;
-  uint32_t loc = m_dil_token.GetLocation();
-  Token::Kind kind = m_dil_token.GetKind();
+  uint32_t loc = CurToken().GetLocation();
+  Token::Kind kind = CurToken().GetKind();
 
   switch (kind) {
     case Token::kw_int: {
@@ -820,7 +883,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       BailOut(ErrorCode::kInvalidOperandType,
               llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
-                  ToString(type_spec)),
+                  type_spec),
               loc);
       return false;
     }
@@ -842,7 +905,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       BailOut(ErrorCode::kInvalidOperandType,
               llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
-                  ToString(type_spec)),
+                  type_spec),
               loc);
       return false;
     }
@@ -857,7 +920,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       BailOut(ErrorCode::kInvalidOperandType,
               llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
-                  ToString(type_spec)),
+                  type_spec),
               loc);
       return false;
     }
@@ -872,7 +935,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       BailOut(ErrorCode::kInvalidOperandType,
               llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
-                  ToString(type_spec)),
+                  type_spec),
               loc);
       return false;
     }
@@ -895,7 +958,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       BailOut(ErrorCode::kInvalidOperandType,
               llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
-                  ToString(type_spec)),
+                  type_spec),
               loc);
       return false;
     }
@@ -911,7 +974,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       if (type_decl->m_sign_specifier != SignSpecifier::kUnknown) {
         BailOut(ErrorCode::kInvalidOperandType,
                 llvm::formatv("'{0}' cannot be signed or unsigned",
-                              ToString(ToTypeSpecifier(kind))),
+                              ToTypeSpecifier(kind)),
                 loc);
         return false;
       }
@@ -919,7 +982,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
         BailOut(ErrorCode::kInvalidOperandType,
                 llvm::formatv(
                     "cannot combine with previous '{0}' declaration specifier",
-                    ToString(type_spec)),
+                    type_spec),
                 loc);
       }
       type_decl->m_type_specifier = ToTypeSpecifier(kind);
@@ -934,7 +997,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
         BailOut(ErrorCode::kInvalidOperandType,
                 llvm::formatv(
                     "cannot combine with previous '{0}' declaration specifier",
-                    ToString(type_decl->m_sign_specifier)),
+                    type_decl->m_sign_specifier),
                 loc);
         return false;
       }
@@ -947,8 +1010,7 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
           type_spec == TypeSpecifier::kChar16 ||
           type_spec == TypeSpecifier::kChar32) {
         BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv("'{0}' cannot be signed or unsigned",
-                              ToString(type_spec)),
+                llvm::formatv("'{0}' cannot be signed or unsigned", type_spec),
                 loc);
         return false;
       }
@@ -965,24 +1027,24 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
   }
 }
 
-DILASTNodeUP DILParser::ParseStringLiteral() {
-  ExpectOneOf(Token::string_literal, Token::wide_string_literal,
-              Token::utf8_string_literal);
-  uint32_t loc = m_dil_token.GetLocation();
+ASTNodeUP DILParser::ParseStringLiteral() {
+  ExpectOneOf(std::vector<Token::Kind>{Token::string_literal,
+                                       Token::wide_string_literal,
+                                       Token::utf8_string_literal});
+  uint32_t loc = CurToken().GetLocation();
 
   // TODO: Support parsing of joined string-literals (e.g. "abc" "def").
   // Currently, only a single token can be parsed into a string.
-  dil::StringLiteralParser string_literal(
-      llvm::ArrayRef<Token>(m_dil_token), m_dil_lexer);
+  dil::StringLiteralParser string_literal(llvm::ArrayRef<Token>(CurToken()),
+                                          m_dil_lexer);
 
   if (string_literal.hadError) {
     // TODO: Use ErrorCode::kInvalidStringLiteral in the future.
     BailOut(ErrorCode::kInvalidNumericLiteral,
             llvm::formatv("Failed to parse token as string-literal: {0}",
-                          TokenDescription(m_dil_token)),
+                          CurToken()),
             loc);
-    CompilerType bad_type;
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   auto char_type = GetBasicType(m_ctx_scope, PickCharType(string_literal));
@@ -999,7 +1061,7 @@ DILASTNodeUP DILParser::ParseStringLiteral() {
 
   assert(data.size() == array_type.GetByteSize(nullptr) &&
          "invalid string literal: unexpected data size");
-  ConsumeToken();
+  m_dil_lexer.Advance();
   return std::make_unique<StringLiteralNode>(loc, array_type, std::move(data));
 }
 
@@ -1008,7 +1070,7 @@ DILASTNodeUP DILParser::ParseStringLiteral() {
 //  expression:
 //    assignment_expression
 //
-DILASTNodeUP DILParser::ParseExpression() { return ParseAssignmentExpression(); }
+ASTNodeUP DILParser::ParseExpression() { return ParseAssignmentExpression(); }
 
 // Parse an assignment_expression.
 //
@@ -1033,31 +1095,30 @@ DILASTNodeUP DILParser::ParseExpression() { return ParseAssignmentExpression(); 
 //    logical_or_expression
 //    logical_or_expression "?" expression ":" assignment_expression
 //
-DILASTNodeUP DILParser::ParseAssignmentExpression() {
+ASTNodeUP DILParser::ParseAssignmentExpression() {
   auto lhs = ParseLogicalOrExpression();
 
   // Check if it's an assignment expression.
-  if (m_dil_token.IsOneOf(Token::equal, Token::starequal,
-                     Token::slashequal, Token::percentequal,
-                     Token::plusequal, Token::minusequal,
-                     Token::greatergreaterequal, Token::lesslessequal,
-                     Token::ampequal, Token::caretequal,
-                     Token::pipeequal)) {
+  if (CurToken().IsOneOf({Token::equal, Token::starequal, Token::slashequal,
+                          Token::percentequal, Token::plusequal,
+                          Token::minusequal, Token::greatergreaterequal,
+                          Token::lesslessequal, Token::ampequal,
+                          Token::caretequal, Token::pipeequal})) {
     // That's an assignment!
-    Token token = m_dil_token;
-    ConsumeToken();
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseAssignmentExpression();
     lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
                         std::move(lhs), std::move(rhs), token.GetLocation());
   }
 
   // Check if it's a conditional expression.
-  if (m_dil_token.Is(Token::question)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  if (CurToken().Is(Token::question)) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto true_val = ParseExpression();
     Expect(Token::colon);
-    ConsumeToken();
+    m_dil_lexer.Advance();
     auto false_val = ParseAssignmentExpression();
     lhs = BuildTernaryOp(std::move(lhs), std::move(true_val),
                          std::move(false_val), token.GetLocation());
@@ -1071,12 +1132,12 @@ DILASTNodeUP DILParser::ParseAssignmentExpression() {
 //  logical_or_expression:
 //    logical_and_expression {"||" logical_and_expression}
 //
-DILASTNodeUP DILParser::ParseLogicalOrExpression() {
+ASTNodeUP DILParser::ParseLogicalOrExpression() {
   auto lhs = ParseLogicalAndExpression();
 
-  while (m_dil_token.Is(Token::pipepipe)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().Is(Token::pipepipe)) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseLogicalAndExpression();
     lhs = BuildBinaryOp(BinaryOpKind::LOr, std::move(lhs), std::move(rhs),
                         token.GetLocation());
@@ -1090,12 +1151,12 @@ DILASTNodeUP DILParser::ParseLogicalOrExpression() {
 //  logical_and_expression:
 //    inclusive_or_expression {"&&" inclusive_or_expression}
 //
-DILASTNodeUP DILParser::ParseLogicalAndExpression() {
+ASTNodeUP DILParser::ParseLogicalAndExpression() {
   auto lhs = ParseInclusiveOrExpression();
 
-  while (m_dil_token.Is(Token::ampamp)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().Is(Token::ampamp)) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseInclusiveOrExpression();
     lhs = BuildBinaryOp(BinaryOpKind::LAnd, std::move(lhs), std::move(rhs),
                         token.GetLocation());
@@ -1109,12 +1170,12 @@ DILASTNodeUP DILParser::ParseLogicalAndExpression() {
 //  inclusive_or_expression:
 //    exclusive_or_expression {"|" exclusive_or_expression}
 //
-DILASTNodeUP DILParser::ParseInclusiveOrExpression() {
+ASTNodeUP DILParser::ParseInclusiveOrExpression() {
   auto lhs = ParseExclusiveOrExpression();
 
-  while (m_dil_token.Is(Token::pipe)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().Is(Token::pipe)) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseExclusiveOrExpression();
     lhs = BuildBinaryOp(BinaryOpKind::Or, std::move(lhs), std::move(rhs),
                         token.GetLocation());
@@ -1128,12 +1189,12 @@ DILASTNodeUP DILParser::ParseInclusiveOrExpression() {
 //  exclusive_or_expression:
 //    and_expression {"^" and_expression}
 //
-DILASTNodeUP DILParser::ParseExclusiveOrExpression() {
+ASTNodeUP DILParser::ParseExclusiveOrExpression() {
   auto lhs = ParseAndExpression();
 
-  while (m_dil_token.Is(Token::caret)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().Is(Token::caret)) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseAndExpression();
     lhs = BuildBinaryOp(BinaryOpKind::Xor, std::move(lhs), std::move(rhs),
                         token.GetLocation());
@@ -1147,12 +1208,12 @@ DILASTNodeUP DILParser::ParseExclusiveOrExpression() {
 //  and_expression:
 //    equality_expression {"&" equality_expression}
 //
-DILASTNodeUP DILParser::ParseAndExpression() {
+ASTNodeUP DILParser::ParseAndExpression() {
   auto lhs = ParseEqualityExpression();
 
-  while (m_dil_token.Is(Token::amp)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().Is(Token::amp)) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseEqualityExpression();
     lhs = BuildBinaryOp(BinaryOpKind::And, std::move(lhs), std::move(rhs),
                         token.GetLocation());
@@ -1167,12 +1228,12 @@ DILASTNodeUP DILParser::ParseAndExpression() {
 //    relational_expression {"==" relational_expression}
 //    relational_expression {"!=" relational_expression}
 //
-DILASTNodeUP DILParser::ParseEqualityExpression() {
+ASTNodeUP DILParser::ParseEqualityExpression() {
   auto lhs = ParseRelationalExpression();
 
-  while (m_dil_token.IsOneOf(Token::equalequal, Token::exclaimequal)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().IsOneOf({Token::equalequal, Token::exclaimequal})) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseRelationalExpression();
     lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
                         std::move(lhs), std::move(rhs), token.GetLocation());
@@ -1189,13 +1250,13 @@ DILASTNodeUP DILParser::ParseEqualityExpression() {
 //    shift_expression {"<=" shift_expression}
 //    shift_expression {">=" shift_expression}
 //
-DILASTNodeUP DILParser::ParseRelationalExpression() {
+ASTNodeUP DILParser::ParseRelationalExpression() {
   auto lhs = ParseShiftExpression();
 
-  while (m_dil_token.IsOneOf(Token::less, Token::greater,
-                        Token::lessequal, Token::greaterequal)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().IsOneOf(
+      {Token::less, Token::greater, Token::lessequal, Token::greaterequal})) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseShiftExpression();
     lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
                         std::move(lhs), std::move(rhs), token.GetLocation());
@@ -1210,12 +1271,12 @@ DILASTNodeUP DILParser::ParseRelationalExpression() {
 //    additive_expression {"<<" additive_expression}
 //    additive_expression {">>" additive_expression}
 //
-DILASTNodeUP DILParser::ParseShiftExpression() {
+ASTNodeUP DILParser::ParseShiftExpression() {
   auto lhs = ParseAdditiveExpression();
 
-  while (m_dil_token.IsOneOf(Token::lessless, Token::greatergreater)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().IsOneOf({Token::lessless, Token::greatergreater})) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseAdditiveExpression();
     lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
                         std::move(lhs), std::move(rhs), token.GetLocation());
@@ -1230,12 +1291,12 @@ DILASTNodeUP DILParser::ParseShiftExpression() {
 //    multiplicative_expression {"+" multiplicative_expression}
 //    multiplicative_expression {"-" multiplicative_expression}
 //
-DILASTNodeUP DILParser::ParseAdditiveExpression() {
+ASTNodeUP DILParser::ParseAdditiveExpression() {
   auto lhs = ParseMultiplicativeExpression();
 
-  while (m_dil_token.IsOneOf(Token::plus, Token::minus)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().IsOneOf({Token::plus, Token::minus})) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseMultiplicativeExpression();
     lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
                         std::move(lhs), std::move(rhs), token.GetLocation());
@@ -1251,13 +1312,12 @@ DILASTNodeUP DILParser::ParseAdditiveExpression() {
 //    cast_expression {"/" cast_expression}
 //    cast_expression {"%" cast_expression}
 //
-DILASTNodeUP DILParser::ParseMultiplicativeExpression() {
+ASTNodeUP DILParser::ParseMultiplicativeExpression() {
   auto lhs = ParseCastExpression();
 
-  while (m_dil_token.IsOneOf(Token::star, Token::slash,
-                        Token::percent)) {
-    Token token = m_dil_token;
-    ConsumeToken();
+  while (CurToken().IsOneOf({Token::star, Token::slash, Token::percent})) {
+    Token token = CurToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseCastExpression();
     lhs = BuildBinaryOp(dil_token_kind_to_binary_op_kind(token.GetKind()),
                         std::move(lhs), std::move(rhs), token.GetLocation());
@@ -1266,18 +1326,16 @@ DILASTNodeUP DILParser::ParseMultiplicativeExpression() {
   return lhs;
 }
 
-
-
 // Parse a cast_expression.
 //
 //  cast_expression:
 //    unary_expression
 //    "(" type_id ")" cast_expression
 //
-DILASTNodeUP DILParser::ParseCastExpression() {
+ASTNodeUP DILParser::ParseCastExpression() {
   // This can be a C-style cast, try parsing the contents as a type declaration.
-  if (m_dil_token.Is(Token::l_paren)) {
-    Token token = m_dil_token;
+  if (CurToken().Is(Token::l_paren)) {
+    Token token = CurToken();
 
     // Enable lexer backtracking, so that we can rollback in case it's not
     // actually a type declaration.
@@ -1286,7 +1344,7 @@ DILASTNodeUP DILParser::ParseCastExpression() {
     uint32_t save_token_idx = m_dil_lexer.GetCurrentTokenIdx();
 
     // Consume the token only after enabling the backtracking.
-    ConsumeToken();
+    m_dil_lexer.Advance();
 
     // Try parsing the type declaration. If the returned value is not valid,
     // then we should rollback and try parsing the expression.
@@ -1295,13 +1353,11 @@ DILASTNodeUP DILParser::ParseCastExpression() {
       // Successfully parsed the type declaration. Commit the backtracked
       // tokens and parse the cast_expression.
 
-      if (!type_id.value().IsValid()) {
-        CompilerType bad_type;
-        return std::make_unique<ErrorNode>(bad_type);
-      }
+      if (!type_id.value().IsValid())
+        return std::make_unique<ErrorNode>();
 
       Expect(Token::r_paren);
-      ConsumeToken();
+      m_dil_lexer.Advance();
       auto rhs = ParseCastExpression();
 
       return BuildCStyleCast(type_id.value(), std::move(rhs),
@@ -1310,13 +1366,11 @@ DILASTNodeUP DILParser::ParseCastExpression() {
 
     // Failed to parse the contents of the parentheses as a type declaration.
     // Rollback the lexer and try parsing it as unary_expression.
-
     TentativeParsingRollback(save_token_idx);
   }
 
   return ParseUnaryExpression();
 }
-
 
 // Parse an unary_expression.
 //
@@ -1336,14 +1390,13 @@ DILASTNodeUP DILParser::ParseCastExpression() {
 //    "~"
 //    "!"
 //
-DILASTNodeUP DILParser::ParseUnaryExpression() {
-  if (m_dil_token.IsOneOf(Token::plusplus, Token::minusminus,
-                     Token::star, Token::amp, Token::plus,
-                     Token::minus, Token::exclaim,
-                     Token::tilde)) {
-    Token token = m_dil_token;
+ASTNodeUP DILParser::ParseUnaryExpression() {
+  if (CurToken().IsOneOf({Token::plusplus, Token::minusminus, Token::star,
+                          Token::amp, Token::plus, Token::minus, Token::exclaim,
+                          Token::tilde})) {
+    Token token = CurToken();
     uint32_t loc = token.GetLocation();
-    ConsumeToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseCastExpression();
 
     switch (token.GetKind()) {
@@ -1369,9 +1422,9 @@ DILASTNodeUP DILParser::ParseUnaryExpression() {
     }
   }
 
-  if (m_dil_token.Is(Token::kw_sizeof)) {
-    uint32_t sizeof_loc = m_dil_token.GetLocation();
-    ConsumeToken();
+  if (CurToken().Is(Token::kw_sizeof)) {
+    uint32_t sizeof_loc = CurToken().GetLocation();
+    m_dil_lexer.Advance();
 
     // [expr.sizeof](http://eel.is/c++draft/expr.sizeof#1)
     //
@@ -1383,20 +1436,20 @@ DILASTNodeUP DILParser::ParseUnaryExpression() {
     CompilerType operand;
 
     // `(` can mean either a type_id or a parenthesized expression.
-    if (m_dil_token.Is(Token::l_paren)) {
+    if (CurToken().Is(Token::l_paren)) {
       // Start tentative parsing (save token location/idx, for possible
       // rollback).
       uint32_t save_token_idx = m_dil_lexer.GetCurrentTokenIdx();
 
       Expect(Token::l_paren);
-      ConsumeToken();
+      m_dil_lexer.Advance();
 
       // Parse the type definition and resolve the type.
       auto type_id = ParseTypeId();
       if (type_id) {
         // type_id requires parentheses, so there must be a closing one.
         Expect(Token::r_paren);
-        ConsumeToken();
+        m_dil_lexer.Advance();
 
         operand = type_id.value();
 
@@ -1411,10 +1464,8 @@ DILASTNodeUP DILParser::ParseUnaryExpression() {
       // No opening parenthesis means this must be an unary_expression.
       operand = ParseUnaryExpression()->GetDereferencedResultType();
     }
-    if (!operand.IsValid()) {
-      CompilerType bad_type;
-      return std::make_unique<ErrorNode>(bad_type);
-    }
+    if (!operand.IsValid())
+      return std::make_unique<ErrorNode>();
 
     lldb::BasicType size_type;
     llvm::Triple triple(llvm::Twine(
@@ -1447,43 +1498,43 @@ DILASTNodeUP DILParser::ParseUnaryExpression() {
 //    dynamic_cast "<" type_id ">" "(" expression ")" ;
 //    reinterpret_cast "<" type_id ">" "(" expression ")" ;
 //
-DILASTNodeUP DILParser::ParsePostfixExpression() {
+ASTNodeUP DILParser::ParsePostfixExpression() {
   // Parse the first part of the postfix_expression. This could be either a
   // primary_expression, or a postfix_expression itself.
-  DILASTNodeUP lhs;
+  ASTNodeUP lhs;
   CompilerType bad_type;
 
   // C++-style cast.
-  if (m_dil_token.IsOneOf(Token::kw_static_cast, Token::kw_dynamic_cast,
-                     Token::kw_reinterpret_cast)) {
-    Token::Kind cast_kind = m_dil_token.GetKind();
-    uint32_t cast_loc = m_dil_token.GetLocation();
-    ConsumeToken();
+  if (CurToken().IsOneOf({Token::kw_static_cast, Token::kw_dynamic_cast,
+                          Token::kw_reinterpret_cast})) {
+    Token::Kind cast_kind = CurToken().GetKind();
+    uint32_t cast_loc = CurToken().GetLocation();
+    m_dil_lexer.Advance();
 
     Expect(Token::less);
-    ConsumeToken();
+    m_dil_lexer.Advance();
 
-    uint32_t loc = m_dil_token.GetLocation();
+    uint32_t loc = CurToken().GetLocation();
 
     // Parse the type definition and resolve the type.
     auto type_id = ParseTypeId(/*must_be_type_id*/ true);
     if (!type_id) {
       BailOut(ErrorCode::kInvalidOperandType,
               "type name requires a specifier or qualifier", loc);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
     if (!type_id.value().IsValid()) {
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
 
     Expect(Token::greater);
-    ConsumeToken();
+    m_dil_lexer.Advance();
 
     Expect(Token::l_paren);
-    ConsumeToken();
+    m_dil_lexer.Advance();
     auto rhs = ParseExpression();
     Expect(Token::r_paren);
-    ConsumeToken();
+    m_dil_lexer.Advance();
 
     lhs = BuildCxxCast(cast_kind, type_id.value(), std::move(rhs), cast_loc);
 
@@ -1493,23 +1544,22 @@ DILASTNodeUP DILParser::ParsePostfixExpression() {
   }
   assert(lhs && "LHS of the postfix_expression can't be NULL.");
 
-  while (m_dil_token.IsOneOf(Token::l_square, Token::period,
-                        Token::arrow, Token::plusplus,
-                        Token::minusminus)) {
-    Token token = m_dil_token;
+  while (CurToken().IsOneOf({Token::l_square, Token::period, Token::arrow,
+                             Token::plusplus, Token::minusminus})) {
+    Token token = CurToken();
     switch (token.GetKind()) {
       case Token::period:
       case Token::arrow: {
-        ConsumeToken();
-        Token member_token = m_dil_token;
+        m_dil_lexer.Advance();
+        Token member_token = CurToken();
         auto member_id = ParseIdExpression();
         // Check if this is a function call.
-        if (m_dil_token.Is(Token::l_paren)) {
+        if (CurToken().Is(Token::l_paren)) {
           // TODO: Check if `member_id` is actually a member function of `lhs`.
           // If not, produce a more accurate diagnostic.
           BailOut(ErrorCode::kNotImplemented,
                   "member function calls are not supported",
-                  m_dil_token.GetLocation());
+                  CurToken().GetLocation());
         }
         lhs = BuildMemberOf(std::move(lhs), std::move(member_id),
                             token.GetKind() == Token::arrow,
@@ -1517,20 +1567,20 @@ DILASTNodeUP DILParser::ParsePostfixExpression() {
         break;
       }
       case Token::plusplus: {
-        ConsumeToken();
+        m_dil_lexer.Advance();
         return BuildUnaryOp(UnaryOpKind::PostInc, std::move(lhs),
                             token.GetLocation());
       }
       case Token::minusminus: {
-        ConsumeToken();
+        m_dil_lexer.Advance();
         return BuildUnaryOp(UnaryOpKind::PostDec, std::move(lhs),
                             token.GetLocation());
       }
       case Token::l_square: {
-        ConsumeToken();
+        m_dil_lexer.Advance();
         auto rhs = ParseExpression();
         Expect(Token::r_square);
-        ConsumeToken();
+        m_dil_lexer.Advance();
         lhs = BuildBinarySubscript(std::move(lhs), std::move(rhs),
                                    token.GetLocation());
         break;
@@ -1551,34 +1601,33 @@ DILASTNodeUP DILParser::ParsePostfixExpression() {
 //    boolean_literal
 //    pointer_literal
 //    id_expression
-//    "this"
 //    "(" expression ")"
 //    builtin_func
 //
-DILASTNodeUP DILParser::ParsePrimaryExpression() {
+ASTNodeUP DILParser::ParsePrimaryExpression() {
   CompilerType bad_type;
-  if (m_dil_token.Is(Token::numeric_constant)) {
+  if (CurToken().Is(Token::numeric_constant)) {
     return ParseNumericLiteral();
-  } else if (m_dil_token.IsOneOf(Token::kw_true, Token::kw_false)) {
+  } else if (CurToken().IsOneOf({Token::kw_true, Token::kw_false})) {
     return ParseBooleanLiteral();
-  } else if (m_dil_token.IsOneOf(Token::char_constant,
-                            Token::wide_char_constant,
-                            Token::utf8_char_constant)) {
+  } else if (CurToken().IsOneOf({Token::char_constant,
+                                 Token::wide_char_constant,
+                                 Token::utf8_char_constant})) {
     return ParseCharLiteral();
-  } else if (m_dil_lexer.IsStringLiteral(m_dil_token.GetKind())) {
+  } else if (m_dil_lexer.IsStringLiteral(CurToken().GetKind())) {
     // Note: Only expressions that consist of a single string literal can be
     // handled by DIL.
     BailOut(ErrorCode::kNotImplemented, "string literals are not supported",
-            m_dil_token.GetLocation());
-    return std::make_unique<ErrorNode>(bad_type);
-  } else if (m_dil_token.Is(Token::kw_nullptr)) {
+            CurToken().GetLocation());
+    return std::make_unique<ErrorNode>();
+  } else if (CurToken().Is(Token::kw_nullptr)) {
     return ParsePointerLiteral();
-  } else if (m_dil_token.IsOneOf(Token::coloncolon, Token::identifier)) {
+  } else if (CurToken().IsOneOf({Token::coloncolon, Token::identifier})) {
     // Save the source location for the diagnostics message.
-    uint32_t loc = m_dil_token.GetLocation();
+    uint32_t loc = CurToken().GetLocation();
     auto identifier = ParseIdExpression();
     // Check if this is a function call.
-    if (m_dil_token.Is(Token::l_paren)) {
+    if (CurToken().Is(Token::l_paren)) {
       auto func_def = GetBuiltinFunctionDef(m_ctx_scope, identifier);
       if (!func_def) {
         BailOut(
@@ -1586,39 +1635,29 @@ DILASTNodeUP DILParser::ParsePrimaryExpression() {
             llvm::formatv("function '{0}' is not a supported builtin intrinsic",
                           identifier),
             loc);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
       return ParseBuiltinFunction(loc, std::move(func_def));
     }
     // Otherwise look for an identifier.
     // TODO: Handle bitfield identifiers when evaluating in the value context.
-    auto value = LookupIdentifier(identifier, m_ctx_scope, m_use_dynamic,
-                                  nullptr);
+    auto value =
+        LookupIdentifier(identifier, m_ctx_scope, m_use_dynamic, nullptr);
+    if (!value)
+      value = LookupGlobalIdentifier(identifier, m_ctx_scope,
+                                     m_ctx_scope->CalculateTarget(),
+                                     m_use_dynamic, nullptr);
+
     if (!value) {
       BailOut(ErrorCode::kUndeclaredIdentifier,
               llvm::formatv("use of undeclared identifier '{0}'", identifier),
               loc);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
-    return std::make_unique<IdentifierNode>(loc, identifier, std::move(value),
-                                            /*is_rvalue*/ false,
-                                            IsContextVar(identifier));
-  } else if (m_dil_token.Is(Token::kw_this)) {
-    // Save the source location for the diagnostics message.
-    uint32_t loc = m_dil_token.GetLocation();
-    ConsumeToken();
-    auto value = LookupIdentifier("this", m_ctx_scope, m_use_dynamic);
-    if (!value) {
-      BailOut(ErrorCode::kUndeclaredIdentifier,
-              "invalid use of 'this' outside of a non-static member function",
-              loc);
-      return std::make_unique<ErrorNode>(bad_type);
-    }
-    // Special case for "this" pointer. As per C++ standard, it's a prvalue.
-    return std::make_unique<IdentifierNode>(loc, "this", std::move(value),
-                                            /*is_rvalue*/ true,
-                                            /*is_context_var*/ false);
-  } else if (m_dil_token.Is(Token::l_paren)) {
+    return std::make_unique<IdentifierNode>(
+        loc, identifier, m_use_dynamic, std::move(value),
+        /*is_rvalue*/ false, IsContextVar(identifier));
+  } else if (CurToken().Is(Token::l_paren)) {
     // Check in case this is an anonynmous namespace
     if (m_dil_lexer.LookAhead(1).Is(Token::identifier)
         && (((Token)m_dil_lexer.LookAhead(1)).GetSpelling() == "anonymous")
@@ -1626,47 +1665,50 @@ DILASTNodeUP DILParser::ParsePrimaryExpression() {
         && m_dil_lexer.LookAhead(3).Is(Token::r_paren)
         && m_dil_lexer.LookAhead(4).Is(Token::coloncolon)) {
       m_dil_lexer.Advance(4);
-      m_dil_token = m_dil_lexer.GetCurrentToken();
       std::string identifier = "(anonymous namespace)";
       Expect(Token::coloncolon);
       // Save the source location for the diagnostics message.
-      uint32_t loc = m_dil_token.GetLocation();
-      ConsumeToken();
-      assert ((m_dil_token.Is(Token::identifier) ||
-               m_dil_token.Is(Token::l_paren)) &&
-              "Expected an identifier or anonymous namespeace, but not found.");
+      uint32_t loc = CurToken().GetLocation();
+      m_dil_lexer.Advance();
+      assert(
+          (CurToken().Is(Token::identifier) || CurToken().Is(Token::l_paren)) &&
+          "Expected an identifier or anonymous namespeace, but not found.");
       std::string identifier2 = ParseNestedNameSpecifier();
       if (identifier2.empty()) {
         // There was only an identifer, no more levels of nesting. Or there
         // was an invalid expression starting with a left parenthesis.
         Expect(Token::identifier);
-        identifier2 = m_dil_token.GetSpelling();
-        ConsumeToken();
+        identifier2 = CurToken().GetSpelling();
+        m_dil_lexer.Advance();
       }
       identifier = identifier + "::" + identifier2;
       auto value = LookupIdentifier(identifier, m_ctx_scope, m_use_dynamic);
+      if (!value)
+        value = LookupGlobalIdentifier(identifier, m_ctx_scope,
+                                       m_ctx_scope->CalculateTarget(),
+                                       m_use_dynamic);
       if (!value) {
         BailOut(ErrorCode::kUndeclaredIdentifier,
                 llvm::formatv("use of undeclared identifier '{0}'", identifier),
                 loc);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
-      return std::make_unique<IdentifierNode>(loc, identifier, std::move(value),
-                                              /*is_rvalue*/ false,
-                                              IsContextVar(identifier));
+      return std::make_unique<IdentifierNode>(
+          loc, identifier, m_use_dynamic, std::move(value),
+          /* is_rvalue */ false, IsContextVar(identifier));
     } else {
-      ConsumeToken();
+      m_dil_lexer.Advance();
       auto expr = ParseExpression();
       Expect(Token::r_paren);
-      ConsumeToken();
+      m_dil_lexer.Advance();
       return expr;
     }
   }
 
   BailOut(ErrorCode::kInvalidExpressionSyntax,
-          llvm::formatv("Unexpected token: {0}", TokenDescription(m_dil_token)),
-          m_dil_token.GetLocation());
-  return std::make_unique<ErrorNode>(bad_type);
+          llvm::formatv("Unexpected token: {0}", CurToken()),
+          CurToken().GetLocation());
+  return std::make_unique<ErrorNode>();
 }
 
 // Parse a type_id.
@@ -1675,7 +1717,7 @@ DILASTNodeUP DILParser::ParsePrimaryExpression() {
 //    type_specifier_seq [abstract_declarator]
 //
 std::optional<CompilerType> DILParser::ParseTypeId(bool must_be_type_id) {
-  uint32_t type_loc = m_dil_token.GetLocation();
+  uint32_t type_loc = CurToken().GetLocation();
   TypeDeclaration type_decl;
   CompilerType bad_type;
 
@@ -1736,6 +1778,21 @@ std::optional<CompilerType> DILParser::ParseTypeId(bool must_be_type_id) {
       }
       return {};
     }
+
+    if (LookupGlobalIdentifier(type_decl.m_user_typename, m_ctx_scope,
+                               m_ctx_scope->CalculateTarget(), m_use_dynamic)) {
+      // Same-name identifiers should be preferred over typenames.
+      // TODO: Make type accessible with 'class', 'struct' and 'union' keywords.
+      if (must_be_type_id) {
+        BailOut(ErrorCode::kUndeclaredIdentifier,
+                llvm::formatv(
+                    "must use '{0}' tag to refer to type '{1}' in this scope",
+                    type.GetTypeTag(), type_decl.m_user_typename),
+                type_loc);
+        return bad_type;
+      }
+      return {};
+    }
   }
 
   //
@@ -1743,7 +1800,7 @@ std::optional<CompilerType> DILParser::ParseTypeId(bool must_be_type_id) {
   //    ptr_operator [abstract_declarator]
   //
   std::vector<DILParser::PtrOperator> ptr_operators;
-  while (IsPtrOperator(m_dil_token)) {
+  while (IsPtrOperator(CurToken())) {
     ptr_operators.push_back(ParsePtrOperator());
   }
   type = ResolveTypeDeclarators(type, ptr_operators);
@@ -1790,18 +1847,18 @@ void DILParser::ParseTypeSpecifierSeq(TypeDeclaration* type_decl) {
 // Returns TRUE if a type_specifier was successfully parsed at this location.
 //
 bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
-  if (IsCvQualifier(m_dil_token)) {
+  if (IsCvQualifier(CurToken())) {
     // Just ignore CV quialifiers, we don't use them in type casting.
-    ConsumeToken();
+    m_dil_lexer.Advance();
     return true;
   }
 
-  if (IsSimpleTypeSpecifierKeyword(m_dil_token)) {
+  if (IsSimpleTypeSpecifierKeyword(CurToken())) {
     // User-defined typenames can't be combined with builtin keywords.
     if (type_decl->m_is_user_type) {
       BailOut(ErrorCode::kInvalidOperandType,
               "cannot combine with previous declaration specifier",
-              m_dil_token.GetLocation());
+              CurToken().GetLocation());
       type_decl->m_has_error = true;
       return false;
     }
@@ -1814,7 +1871,7 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
       type_decl->m_has_error = true;
       return false;
     }
-    ConsumeToken();
+    m_dil_lexer.Advance();
     return true;
   }
 
@@ -1823,12 +1880,12 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
   {
     // Try parsing optional global scope operator.
     bool global_scope = false;
-    if (m_dil_token.Is(Token::coloncolon)) {
+    if (CurToken().Is(Token::coloncolon)) {
       global_scope = true;
-      ConsumeToken();
+      m_dil_lexer.Advance();
     }
 
-    uint32_t loc = m_dil_token.GetLocation();
+    uint32_t loc = CurToken().GetLocation();
 
     // Try parsing optional nested_name_specifier.
     auto nested_name_specifier = ParseNestedNameSpecifier();
@@ -1879,8 +1936,7 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
 std::string DILParser::ParseNestedNameSpecifier() {
   // The first token in nested_name_specifier is always an identifier, or
   // '(anonymous namespace)'.
-  if (m_dil_token.IsNot(Token::identifier) &&
-      m_dil_token.IsNot(Token::l_paren)) {
+  if (CurToken().IsNot(Token::identifier) && CurToken().IsNot(Token::l_paren)) {
     return "";
   }
 
@@ -1888,7 +1944,7 @@ std::string DILParser::ParseNestedNameSpecifier() {
   // the the string '(anonymous namespace)', which has a space in it (throwing
   // off normal parsing) and is not actually proper C++> Check to see if we're
   // looking at '(anonymous namespace)::...'
-  if (m_dil_token.Is(Token::l_paren)) {
+  if (CurToken().Is(Token::l_paren)) {
     // Look for all the pieces, in order:
     // l_paren 'anonymous' 'namespace' r_paren coloncolon
     if (m_dil_lexer.LookAhead(1).Is(Token::identifier)
@@ -1897,17 +1953,16 @@ std::string DILParser::ParseNestedNameSpecifier() {
         && m_dil_lexer.LookAhead(3).Is(Token::r_paren)
         && m_dil_lexer.LookAhead(4).Is(Token::coloncolon)) {
       m_dil_lexer.Advance(4);
-      m_dil_token = m_dil_lexer.GetCurrentToken();
 
-      assert ((m_dil_token.Is(Token::identifier)
-               || m_dil_token.Is(Token::l_paren)) &&
-              "Expected an identifier or anonymous namespace, but not found.");
+      assert(
+          (CurToken().Is(Token::identifier) || CurToken().Is(Token::l_paren)) &&
+          "Expected an identifier or anonymous namespace, but not found.");
       // Continue parsing the nested_namespace_specifier.
       std::string identifier2 = ParseNestedNameSpecifier();
       if (identifier2.empty()) {
         Expect(Token::identifier);
-        identifier2 = m_dil_token.GetSpelling();
-        ConsumeToken();
+        identifier2 = CurToken().GetSpelling();
+        m_dil_lexer.Advance();
       }
       return "(anonymous namespace)::" + identifier2;
     } else {
@@ -1919,11 +1974,10 @@ std::string DILParser::ParseNestedNameSpecifier() {
   // nested_name_specifier
   if (m_dil_lexer.LookAhead(1).Is(Token::coloncolon)) {
     // This nested_name_specifier is a single identifier.
-    std::string identifier = m_dil_token.GetSpelling();
+    std::string identifier = CurToken().GetSpelling();
     m_dil_lexer.Advance(1);
-    m_dil_token = m_dil_lexer.GetCurrentToken();
     Expect(Token::coloncolon);
-    ConsumeToken();
+    m_dil_lexer.Advance();
     // Continue parsing the nested_name_specifier.
     return identifier + "::" + ParseNestedNameSpecifier();
   }
@@ -1943,9 +1997,8 @@ std::string DILParser::ParseNestedNameSpecifier() {
     // If we did parse the type_name successfully and it's followed by the scope
     // operator ("::"), then this is indeed a nested_name_specifier. Continue
     // parsing nested_name_specifier.
-    if (!type_name.empty() && m_dil_token.Is(Token::coloncolon)) {
+    if (!type_name.empty() && CurToken().Is(Token::coloncolon)) {
       m_dil_lexer.Advance();
-      m_dil_token = m_dil_lexer.GetCurrentToken();
       // Continue parsing the nested_name_specifier.
       return type_name + "::" + ParseNestedNameSpecifier();
     }
@@ -1981,7 +2034,7 @@ std::string DILParser::ParseNestedNameSpecifier() {
 //
 std::string DILParser::ParseTypeName() {
   // Typename always starts with an identifier.
-  if (m_dil_token.IsNot(Token::identifier)) {
+  if (CurToken().IsNot(Token::identifier)) {
     return "";
   }
 
@@ -1989,33 +2042,31 @@ std::string DILParser::ParseTypeName() {
   // a simple_template_id.
   if (m_dil_lexer.LookAhead(1).Is(Token::less)) {
     // Parse the template_name. In this case it's just an identifier.
-    std::string template_name = m_dil_token.GetSpelling();
+    std::string template_name = CurToken().GetSpelling();
     m_dil_lexer.Advance(1);
-    m_dil_token = m_dil_lexer.GetCurrentToken();
     // Consume the "<" token.
-    ConsumeToken();
+    m_dil_lexer.Advance();
 
     // Short-circuit for missing template_argument_list.
-    if (m_dil_token.Is(Token::greater)) {
-      ConsumeToken();
+    if (CurToken().Is(Token::greater)) {
+      m_dil_lexer.Advance();
       return llvm::formatv("{0}<>", template_name);
     }
 
     // Try parsing template_argument_list.
     auto template_argument_list = ParseTemplateArgumentList();
 
-    if (m_dil_token.Is(Token::greater)) {
+    if (CurToken().Is(Token::greater)) {
       // Single closing angle bracket is a valid end of the template argument
       // list, just consume it.
-      ConsumeToken();
+      m_dil_lexer.Advance();
 
-    } else if (m_dil_token.Is(Token::greatergreater)) {
+    } else if (CurToken().Is(Token::greatergreater)) {
       // C++11 allows using ">>" in nested template argument lists and C++-style
       // casts. In this case we alter change the token type to ">", but don't
       // consume it -- it will be done on the outer level when completing the
       // outer template argument list or C++-style cast.
-      uint32_t loc = m_dil_token.GetLocation();
-      m_dil_token = Token(Token::greater, ">", loc);
+      uint32_t loc = CurToken().GetLocation();
       m_dil_lexer.InsertToken(Token(Token::greater, ">", loc+1));
 
     } else {
@@ -2028,8 +2079,8 @@ std::string DILParser::ParseTypeName() {
   }
 
   // Otherwise look for a class_name, enum_name or a typedef_name.
-  std::string identifier = m_dil_token.GetSpelling();
-  ConsumeToken();
+  std::string identifier = CurToken().GetSpelling();
+  m_dil_lexer.Advance();
 
   return identifier;
 }
@@ -2047,7 +2098,7 @@ std::string DILParser::ParseTemplateArgumentList() {
   do {
     // Eat the comma if this is not the first iteration.
     if (arguments.size() > 0) {
-      ConsumeToken();
+      m_dil_lexer.Advance();
     }
 
     // Try parsing a template_argument. If this fails, then this is actually not
@@ -2059,7 +2110,7 @@ std::string DILParser::ParseTemplateArgumentList() {
 
     arguments.push_back(argument);
 
-  } while (m_dil_token.Is(Token::comma));
+  } while (CurToken().Is(Token::comma));
 
   // Internally in LLDB/Clang nested template type names have extra spaces to
   // avoid having ">>". Add the extra space before the closing ">" if the
@@ -2114,13 +2165,13 @@ std::string DILParser::ParseTemplateArgument() {
     uint32_t save_token_idx = m_dil_lexer.GetCurrentTokenIdx();
 
     // Parse a numeric_literal.
-    if (m_dil_token.Is(Token::numeric_constant)) {
+    if (CurToken().Is(Token::numeric_constant)) {
       // TODO: Actually parse the literal, check if it's valid and
       // canonize it (e.g. 8LL -> 8).
-      std::string numeric_literal = m_dil_token.GetSpelling();
-      ConsumeToken();
+      std::string numeric_literal = CurToken().GetSpelling();
+      m_dil_lexer.Advance();
 
-      if (TokenEndsTemplateArgumentList(m_dil_token)) {
+      if (TokenEndsTemplateArgumentList(CurToken())) {
         return numeric_literal;
       }
     }
@@ -2139,7 +2190,7 @@ std::string DILParser::ParseTemplateArgument() {
 
     // If we've parsed the id_expression successfully and the next token can
     // finish the template_argument, then we're done here.
-    if (!id_expression.empty() && TokenEndsTemplateArgumentList(m_dil_token)) {
+    if (!id_expression.empty() && TokenEndsTemplateArgumentList(CurToken())) {
       return id_expression;
     }
     // Failed to parse a id_expression.
@@ -2149,7 +2200,7 @@ std::string DILParser::ParseTemplateArgument() {
   // TODO: Another valid option here is a constant_expression, but
   // we definitely don't want to support constant arithmetic like "Foo<1+2>".
   // We can probably use ParsePrimaryExpression here, but need to figure out the
-  // "stringification", since ParsePrimaryExpression returns DILASTNodeUP (and
+  // "stringification", since ParsePrimaryExpression returns ASTNodeUP (and
   // potentially a whole expression, not just a single constant.)
 
   // This is not a template_argument.
@@ -2163,12 +2214,12 @@ std::string DILParser::ParseTemplateArgument() {
 //    "&"
 //
 DILParser::PtrOperator DILParser::ParsePtrOperator() {
-  ExpectOneOf(Token::star, Token::amp);
+  ExpectOneOf(std::vector<Token::Kind>{Token::star, Token::amp});
 
   PtrOperator ptr_operator;
-  if (m_dil_token.Is(Token::star)) {
-    ptr_operator = std::make_tuple(Token::star, m_dil_token.GetLocation());
-    ConsumeToken();
+  if (CurToken().Is(Token::star)) {
+    ptr_operator = std::make_tuple(Token::star, CurToken().GetLocation());
+    m_dil_lexer.Advance();
 
     //
     //  cv_qualifier_seq:
@@ -2178,14 +2229,14 @@ DILParser::PtrOperator DILParser::ParsePtrOperator() {
     //    "const"
     //    "volatile"
     //
-    while (IsCvQualifier(m_dil_token)) {
+    while (IsCvQualifier(CurToken())) {
       // Just ignore CV quialifiers, we don't use them in type casting.
-      ConsumeToken();
+      m_dil_lexer.Advance();
     }
 
-  } else if (m_dil_token.Is(Token::amp)) {
-    ptr_operator = std::make_tuple(Token::amp, m_dil_token.GetLocation());
-    ConsumeToken();
+  } else if (CurToken().Is(Token::amp)) {
+    ptr_operator = std::make_tuple(Token::amp, CurToken().GetLocation());
+    m_dil_lexer.Advance();
   }
 
   return ptr_operator;
@@ -2207,9 +2258,9 @@ DILParser::PtrOperator DILParser::ParsePtrOperator() {
 std::string DILParser::ParseIdExpression() {
   // Try parsing optional global scope operator.
   bool global_scope = false;
-  if (m_dil_token.Is(Token::coloncolon)) {
+  if (CurToken().Is(Token::coloncolon)) {
     global_scope = true;
-    ConsumeToken();
+    m_dil_lexer.Advance();
   }
 
   // Try parsing optional nested_name_specifier.
@@ -2229,8 +2280,8 @@ std::string DILParser::ParseIdExpression() {
   // qualified_id production. Follow the second production rule.
   else if (global_scope) {
     Expect(Token::identifier);
-    std::string identifier = m_dil_token.GetSpelling();
-    ConsumeToken();
+    std::string identifier = CurToken().GetSpelling();
+    m_dil_lexer.Advance();
     return llvm::formatv("{0}{1}", global_scope ? "::" : "", identifier);
   }
 
@@ -2248,8 +2299,8 @@ std::string DILParser::ParseIdExpression() {
 //
 std::string DILParser::ParseUnqualifiedId() {
   Expect(Token::identifier);
-  std::string identifier = m_dil_token.GetSpelling();
-  ConsumeToken();
+  std::string identifier = CurToken().GetSpelling();
+  m_dil_lexer.Advance();
   return identifier;
 }
 
@@ -2258,10 +2309,10 @@ std::string DILParser::ParseUnqualifiedId() {
 //  numeric_literal:
 //    ? Token::numeric_constant ?
 //
-DILASTNodeUP DILParser::ParseNumericLiteral() {
+ASTNodeUP DILParser::ParseNumericLiteral() {
   Expect(Token::numeric_constant);
-  DILASTNodeUP numeric_constant = ParseNumericConstant();
-  ConsumeToken();
+  ASTNodeUP numeric_constant = ParseNumericConstant();
+  m_dil_lexer.Advance();
   return numeric_constant;
 }
 
@@ -2271,37 +2322,37 @@ DILASTNodeUP DILParser::ParseNumericLiteral() {
 //    "true"
 //    "false"
 //
-DILASTNodeUP DILParser::ParseBooleanLiteral() {
-  ExpectOneOf(Token::kw_true, Token::kw_false);
-  uint32_t loc = m_dil_token.GetLocation();
-  bool literal_value = m_dil_token.Is(Token::kw_true);
-  ConsumeToken();
+ASTNodeUP DILParser::ParseBooleanLiteral() {
+  ExpectOneOf(std::vector<Token::Kind>{Token::kw_true, Token::kw_false});
+  uint32_t loc = CurToken().GetLocation();
+  bool literal_value = CurToken().Is(Token::kw_true);
+  m_dil_lexer.Advance();
   Scalar scalar_value(static_cast<int>(literal_value));
   return std::make_unique<ScalarLiteralNode>(
       loc, GetBasicType(m_ctx_scope, lldb::eBasicTypeBool), scalar_value);
 }
 
-DILASTNodeUP DILParser::ParseCharLiteral() {
-  ExpectOneOf(Token::char_constant,
-              Token::wide_char_constant,
-              Token::utf8_char_constant);
-  uint32_t loc = m_dil_token.GetLocation();
+ASTNodeUP DILParser::ParseCharLiteral() {
+  ExpectOneOf(std::vector<Token::Kind>{Token::char_constant,
+                                       Token::wide_char_constant,
+                                       Token::utf8_char_constant});
+  uint32_t loc = CurToken().GetLocation();
 
-  std::string token_spelling = m_dil_token.GetSpelling();
+  std::string token_spelling = CurToken().GetSpelling();
 
   const char* token_begin = token_spelling.c_str();
   dil::CharLiteralParser char_literal(token_begin,
-                                      token_begin + token_spelling.size(),
-                                      loc, m_dil_lexer, m_dil_token.GetKind());
+                                      token_begin + token_spelling.size(), loc,
+                                      m_dil_lexer, CurToken().GetKind());
 
   if (char_literal.hadError()) {
     // TODO: Add new ErrorCode kInvalidCharLiteral and use it
     BailOut(ErrorCode::kInvalidNumericLiteral,
             llvm::formatv("Failed to parse token as char-constant: {0}",
-                          TokenDescription(m_dil_token)),
-            m_dil_token.GetLocation());
+                          CurToken()),
+            CurToken().GetLocation());
     CompilerType bad_type;
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   auto ctx_basic_type = GetBasicType(m_ctx_scope, PickCharType(char_literal));
@@ -2311,7 +2362,7 @@ DILASTNodeUP DILParser::ParseCharLiteral() {
   llvm::APInt literal_value(byte_size * CHAR_BIT,
                             char_literal.getValue());
 
-  ConsumeToken();
+  m_dil_lexer.Advance();
   Scalar scalar_value(literal_value);
   return std::make_unique<ScalarLiteralNode>(loc, ctx_basic_type, scalar_value);
 }
@@ -2321,57 +2372,56 @@ DILASTNodeUP DILParser::ParseCharLiteral() {
 //  pointer_literal:
 //    "nullptr"
 //
-DILASTNodeUP DILParser::ParsePointerLiteral() {
+ASTNodeUP DILParser::ParsePointerLiteral() {
   Expect(Token::kw_nullptr);
-  uint32_t loc = m_dil_token.GetLocation();
-  ConsumeToken();
+  uint32_t loc = CurToken().GetLocation();
+  m_dil_lexer.Advance();
   llvm::APInt raw_value(type_width<uintmax_t>(), 0);
   Scalar scalar_value(raw_value);
   return std::make_unique<ScalarLiteralNode>(
       loc, GetBasicType(m_ctx_scope, lldb::eBasicTypeNullPtr), scalar_value);
 }
 
-DILASTNodeUP DILParser::ParseNumericConstant() {
+ASTNodeUP DILParser::ParseNumericConstant() {
   CompilerType bad_type;
   // Parse numeric constant, it can be either integer or float.
-  std::string tok_spelling = m_dil_token.GetSpelling();
+  std::string tok_spelling = CurToken().GetSpelling();
   llvm::StringRef tok_spelling_ref(tok_spelling);
 
   lldb::TargetSP target_sp = m_ctx_scope->CalculateTarget();
-  dil::NumericLiteralParser literal(
-      tok_spelling_ref, m_dil_token.GetLocation(), /*AllowHalfType=*/true,
-      m_dil_lexer,
-      /*AllowMicrosoftExt=*/true);
+  dil::NumericLiteralParser literal(tok_spelling_ref, CurToken().GetLocation(),
+                                    /*AllowHalfType=*/true, m_dil_lexer,
+                                    /*AllowMicrosoftExt=*/true);
 
   if (literal.hadError) {
-    BailOut(
-        ErrorCode::kInvalidNumericLiteral,
-        "Failed to parse token as numeric-constant: " +
-        TokenDescription(m_dil_token),
-        m_dil_token.GetLocation());
-    return std::make_unique<ErrorNode>(bad_type);
+    BailOut(ErrorCode::kInvalidNumericLiteral,
+            llvm::formatv("Failed to parse token as numeric-constant: {0}",
+                          CurToken()),
+            CurToken().GetLocation());
+    return std::make_unique<ErrorNode>();
   }
 
   // Check for floating-literal and integer-literal. Fail on anything else (i.e.
   // fixed-point literal, who needs them anyway??).
+  Token token = CurToken();
   if (literal.isFloatingLiteral()) {
-    return ParseFloatingLiteral(literal, m_dil_token);
+    return ParseFloatingLiteral(literal, token);
   }
   if (literal.isIntegerLiteral()) {
-    return ParseIntegerLiteral(literal, m_dil_token);
+    return ParseIntegerLiteral(literal, token);
   }
 
   // Don't care about anything else.
   BailOut(ErrorCode::kInvalidNumericLiteral,
-          "numeric-constant should be either float or integer literal: " +
-              TokenDescription(m_dil_token),
-          m_dil_token.GetLocation());
-  return std::make_unique<ErrorNode>(bad_type);
+          llvm::formatv(
+              "numeric-constant should be either float or integer literal: {0}",
+              CurToken()),
+          CurToken().GetLocation());
+  return std::make_unique<ErrorNode>();
 }
 
-DILASTNodeUP DILParser::ParseFloatingLiteral(
-    dil::NumericLiteralParser& literal,
-    Token& token) {
+ASTNodeUP DILParser::ParseFloatingLiteral(dil::NumericLiteralParser &literal,
+                                          Token &token) {
   const llvm::fltSemantics& format = literal.isFloat
                                          ? llvm::APFloat::IEEEsingle()
                                          : llvm::APFloat::IEEEdouble();
@@ -2384,11 +2434,10 @@ DILASTNodeUP DILParser::ParseFloatingLiteral(
   if ((result & llvm::APFloat::opOverflow) ||
       ((result & llvm::APFloat::opUnderflow) && raw_value.isZero())) {
     BailOut(ErrorCode::kInvalidNumericLiteral,
-            llvm::formatv("float underflow/overflow happened: {0}",
-                          TokenDescription(token)),
+            llvm::formatv("float underflow/overflow happened: {0}", token),
             token.GetLocation());
     CompilerType bad_type;
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   auto basic_type =
@@ -2398,8 +2447,8 @@ DILASTNodeUP DILParser::ParseFloatingLiteral(
       token.GetLocation(), GetBasicType(m_ctx_scope, basic_type), scalar_value);
 }
 
-DILASTNodeUP DILParser::ParseIntegerLiteral(dil::NumericLiteralParser& literal,
-                                            Token& token) {
+ASTNodeUP DILParser::ParseIntegerLiteral(dil::NumericLiteralParser &literal,
+                                         Token &token) {
   // Create a value big enough to fit all valid numbers.
   llvm::APInt raw_value(type_width<uintmax_t>(), 0);
 
@@ -2407,10 +2456,10 @@ DILASTNodeUP DILParser::ParseIntegerLiteral(dil::NumericLiteralParser& literal,
     BailOut(ErrorCode::kInvalidNumericLiteral,
             llvm::formatv("integer literal is too large to be represented in "
                           "any integer type: {0}",
-                          TokenDescription(token)),
+                          token),
             token.GetLocation());
     CompilerType bad_type;
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   auto [type, is_unsigned] = PickIntegerType(m_ctx_scope, literal, raw_value);
@@ -2436,38 +2485,38 @@ DILASTNodeUP DILParser::ParseIntegerLiteral(dil::NumericLiteralParser& literal,
 //  builtin_func_argument:
 //    expression
 //
-DILASTNodeUP DILParser::ParseBuiltinFunction(
-    uint32_t loc, std::unique_ptr<BuiltinFunctionDef> func_def) {
+ASTNodeUP
+DILParser::ParseBuiltinFunction(uint32_t loc,
+                                std::unique_ptr<BuiltinFunctionDef> func_def) {
   Expect(Token::l_paren);
-  ConsumeToken();
+  m_dil_lexer.Advance();
 
-  std::vector<DILASTNodeUP> arguments;
+  std::vector<ASTNodeUP> arguments;
   CompilerType bad_type;
 
-  if (m_dil_token.Is(Token::r_paren)) {
+  if (CurToken().Is(Token::r_paren)) {
     // Empty argument list, nothing to do here.
-    ConsumeToken();
+    m_dil_lexer.Advance();
   } else {
     // Non-empty argument list, parse all the arguments.
     do {
       // Eat the comma if this is not the first iteration.
       if (arguments.size() > 0) {
-        ConsumeToken();
+        m_dil_lexer.Advance();
       }
 
       // Parse a builtin_func_argument. If failed to parse, bail out early and
       // don't try parsing the rest of the arguments.
       auto argument = ParseExpression();
       if (llvm::isa<ErrorNode>(argument)) {
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
 
       arguments.push_back(std::move(argument));
-
-    } while (m_dil_token.Is(Token::comma));
+    } while (CurToken().Is(Token::comma));
 
     Expect(Token::r_paren);
-    ConsumeToken();
+    m_dil_lexer.Advance();
   }
 
   // Check we have the correct number of arguments.
@@ -2479,7 +2528,7 @@ DILASTNodeUP DILParser::ParseBuiltinFunction(
                 func_def->m_name, func_def->m_arguments.size(),
                 arguments.size()),
             loc);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   // Now check that all arguments are correct types and perform implicit
@@ -2494,7 +2543,7 @@ DILASTNodeUP DILParser::ParseBuiltinFunction(
     arguments[i] = InsertImplicitConversion(std::move(arguments[i]),
                                             func_def->m_arguments[i]);
     if (llvm::isa<ErrorNode>(arguments[i])) {
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
   }
 
@@ -2502,8 +2551,8 @@ DILASTNodeUP DILParser::ParseBuiltinFunction(
       loc, func_def->m_return_type, func_def->m_name, std::move(arguments));
 }
 
-DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
-                                      uint32_t location) {
+ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
+                                     uint32_t location) {
   CStyleCastKind cast_kind = dil::CStyleCastKind::eNone;
   TypePromotionCastKind promo_kind = dil::TypePromotionCastKind::eNone;
   CompilerType bad_type;
@@ -2526,7 +2575,7 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
                               rhs_type.TypeDescription(),
                               type.TypeDescription()),
                 location);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
       // Casting pointer to bool is valid. Otherwise check if the result type
       // is at least as big as the pointer size.
@@ -2542,7 +2591,7 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
                     "cast from pointer to smaller type {0} loses information",
                     type.TypeDescription()),
                 location);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
     } else if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
       // Otherwise accept only arithmetic types and enums.
@@ -2551,7 +2600,7 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
                   "cannot convert {0} to {1} without a conversion operator",
                   rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
     promo_kind = TypePromotionCastKind::eArithmetic;
 
@@ -2562,7 +2611,7 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
               llvm::formatv("C-style cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
     cast_kind = CStyleCastKind::eEnumeration;
 
@@ -2575,7 +2624,7 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
               llvm::formatv("cannot cast from type {0} to pointer type {1}",
                             rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
     promo_kind = TypePromotionCastKind::ePointer;
 
@@ -2586,7 +2635,7 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
               llvm::formatv("C-style cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
     cast_kind = CStyleCastKind::eNullptr;
 
@@ -2597,7 +2646,7 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
               llvm::formatv("C-style cast from rvalue to reference type {0}",
                             type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
     cast_kind = CStyleCastKind::eReference;
 
@@ -2607,7 +2656,7 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
             llvm::formatv("casting of {0} to {1} is not implemented yet",
                           rhs_type.TypeDescription(), type.TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   if (cast_kind != dil::CStyleCastKind::eNone)
@@ -2615,9 +2664,8 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
   return std::make_unique<CStyleCastNode>(location, type, std::move(rhs), promo_kind);
 }
 
-DILASTNodeUP DILParser::BuildCxxCast(Token::Kind kind, CompilerType type,
-                                   DILASTNodeUP rhs,
-                                   uint32_t location) {
+ASTNodeUP DILParser::BuildCxxCast(Token::Kind kind, CompilerType type,
+                                  ASTNodeUP rhs, uint32_t location) {
   assert((kind == Token::kw_static_cast ||
           kind == Token::kw_dynamic_cast ||
           kind == Token::kw_reinterpret_cast) &&
@@ -2636,8 +2684,8 @@ DILASTNodeUP DILParser::BuildCxxCast(Token::Kind kind, CompilerType type,
   return BuildCStyleCast(type, std::move(rhs), location);
 }
 
-DILASTNodeUP DILParser::BuildCxxStaticCast(CompilerType type, DILASTNodeUP rhs,
-                                         uint32_t location) {
+ASTNodeUP DILParser::BuildCxxStaticCast(CompilerType type, ASTNodeUP rhs,
+                                        uint32_t location) {
   auto rhs_type = rhs->GetDereferencedResultType();
 
   // Perform implicit array-to-pointer conversion.
@@ -2670,13 +2718,12 @@ DILASTNodeUP DILParser::BuildCxxStaticCast(CompilerType type, DILASTNodeUP rhs,
                         rhs_type.TypeDescription(), type.TypeDescription()),
           location);
   CompilerType bad_type;
-  return std::make_unique<ErrorNode>(bad_type);
+  return std::make_unique<ErrorNode>();
 }
 
-DILASTNodeUP DILParser::BuildCxxStaticCastToScalar(CompilerType type,
-                                                 DILASTNodeUP rhs,
-                                                 uint32_t location)
-{
+ASTNodeUP DILParser::BuildCxxStaticCastToScalar(CompilerType type,
+                                                ASTNodeUP rhs,
+                                                uint32_t location) {
   auto rhs_type = rhs->GetDereferencedResultType();
   CompilerType bad_type;
 
@@ -2687,7 +2734,7 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToScalar(CompilerType type,
               llvm::formatv("static_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
   } else if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
     // Otherwise accept only arithmetic types and enums.
@@ -2696,7 +2743,7 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToScalar(CompilerType type,
         llvm::formatv("cannot convert {0} to {1} without a conversion operator",
                       rhs_type.TypeDescription(), type.TypeDescription()),
         location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   return std::make_unique<CxxStaticCastNode>(location, type, std::move(rhs),
@@ -2704,8 +2751,8 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToScalar(CompilerType type,
                                              /*is_rvalue*/ true);
 }
 
-DILASTNodeUP DILParser::BuildCxxStaticCastToEnum(CompilerType type, DILASTNodeUP rhs,
-                                               uint32_t location) {
+ASTNodeUP DILParser::BuildCxxStaticCastToEnum(CompilerType type, ASTNodeUP rhs,
+                                              uint32_t location) {
   auto rhs_type = rhs->GetDereferencedResultType();
 
   if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
@@ -2714,7 +2761,7 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToEnum(CompilerType type, DILASTNodeUP
                           rhs_type.TypeDescription(), type.TypeDescription()),
             location);
     CompilerType bad_type;
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   return std::make_unique<CxxStaticCastNode>(location, type, std::move(rhs),
@@ -2722,9 +2769,9 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToEnum(CompilerType type, DILASTNodeUP
                                              /*is_rvalue*/ true);
 }
 
-DILASTNodeUP DILParser::BuildCxxStaticCastToPointer(
-    CompilerType type, DILASTNodeUP rhs, uint32_t location)
-{
+ASTNodeUP DILParser::BuildCxxStaticCastToPointer(CompilerType type,
+                                                 ASTNodeUP rhs,
+                                                 uint32_t location) {
   CompilerType bad_type;
   auto rhs_type = rhs->GetDereferencedResultType();
 
@@ -2742,14 +2789,14 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToPointer(
               llvm::formatv("static_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
   } else if (!rhs_type.IsNullPtrType() && !rhs->is_literal_zero()) {
     BailOut(ErrorCode::kInvalidOperandType,
             llvm::formatv("cannot cast from type {0} to pointer type '{1}'",
                           rhs_type.TypeDescription(), type.TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   return std::make_unique<CxxStaticCastNode>(location, type, std::move(rhs),
@@ -2757,10 +2804,9 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToPointer(
                                              /*is_rvalue*/ true);
 }
 
-DILASTNodeUP DILParser::BuildCxxStaticCastToNullPtr(CompilerType type,
-                                                  DILASTNodeUP rhs,
-                                                  uint32_t location)
-{
+ASTNodeUP DILParser::BuildCxxStaticCastToNullPtr(CompilerType type,
+                                                 ASTNodeUP rhs,
+                                                 uint32_t location) {
   auto rhs_type = rhs->GetDereferencedResultType();
 
   if (!rhs_type.IsNullPtrType() && !rhs->is_literal_zero()) {
@@ -2769,7 +2815,7 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToNullPtr(CompilerType type,
                           rhs_type.TypeDescription(), type.TypeDescription()),
             location);
     CompilerType bad_type;
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   return std::make_unique<CxxStaticCastNode>(location, type, std::move(rhs),
@@ -2777,10 +2823,9 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToNullPtr(CompilerType type,
                                              /*is_rvalue*/ true);
 }
 
-DILASTNodeUP DILParser::BuildCxxStaticCastToReference(
-    CompilerType type,
-    DILASTNodeUP rhs,
-    uint32_t location) {
+ASTNodeUP DILParser::BuildCxxStaticCastToReference(CompilerType type,
+                                                   ASTNodeUP rhs,
+                                                   uint32_t location) {
   CompilerType bad_type;
   auto rhs_type = rhs->GetDereferencedResultType();
   auto type_deref = type.GetNonReferenceType();
@@ -2791,7 +2836,7 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToReference(
                           "type {1} is not implemented yet",
                           rhs_type.TypeDescription(), type.TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   if (type_deref.CompareTypes(rhs_type)) {
@@ -2808,11 +2853,12 @@ DILASTNodeUP DILParser::BuildCxxStaticCastToReference(
           llvm::formatv("static_cast from {0} to {1} is not implemented yet",
                         rhs_type.TypeDescription(), type.TypeDescription()),
           location);
-  return std::make_unique<ErrorNode>(bad_type);
+  return std::make_unique<ErrorNode>();
 }
 
-DILASTNodeUP DILParser::BuildCxxStaticCastForInheritedTypes(
-    CompilerType type, DILASTNodeUP rhs, uint32_t location) {
+ASTNodeUP DILParser::BuildCxxStaticCastForInheritedTypes(CompilerType type,
+                                                         ASTNodeUP rhs,
+                                                         uint32_t location) {
   assert((type.IsPointerType() || type.IsReferenceType()) &&
          "target type should either be a pointer or a reference");
 
@@ -2858,7 +2904,7 @@ DILASTNodeUP DILParser::BuildCxxStaticCastForInheritedTypes(
                             rhs_type.TypeDescription(), type.TypeDescription(),
                             virtual_base.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
 
     return std::make_unique<CxxStaticCastNode>(location, type, std::move(rhs),
@@ -2870,11 +2916,11 @@ DILASTNodeUP DILParser::BuildCxxStaticCastForInheritedTypes(
                         "related by inheritance, is not allowed",
                         rhs_type.TypeDescription(), type.TypeDescription()),
           location);
-  return std::make_unique<ErrorNode>(bad_type);
+  return std::make_unique<ErrorNode>();
 }
 
-DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP rhs,
-                                              uint32_t location) {
+ASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
+                                             uint32_t location) {
   CompilerType bad_type;
   auto rhs_type = rhs->GetDereferencedResultType();
   bool is_rvalue = true;
@@ -2886,7 +2932,7 @@ DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP 
               llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
 
     // Perform implicit conversions.
@@ -2910,7 +2956,7 @@ DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP 
                     "cast from pointer to smaller type {0} loses information",
                     type.TypeDescription()),
                 location);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
     } else if (type.IsTypedefType() || rhs_type.IsTypedefType()) {
       CompilerType base_type = type.IsTypedefType() ? type.GetTypedefedType()
@@ -2923,7 +2969,7 @@ DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP 
                 llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                               rhs_type.TypeDescription(), type.TypeDescription()),
                 location);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
     } else if (!type.CompareTypes(rhs_type)) {
       // Integral type can be converted to its own type.
@@ -2931,7 +2977,7 @@ DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP 
               llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
   } else if (type.IsEnumerationType()) {
     // Enumeration type can be converted to its own type.
@@ -2944,7 +2990,7 @@ DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP 
               llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
 
   } else if (type.IsPointerType()) {
@@ -2957,7 +3003,7 @@ DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP 
               llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
 
   } else if (type.IsNullPtrType()) {
@@ -2966,7 +3012,7 @@ DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP 
             llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                           rhs_type.TypeDescription(), type.TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
 
   } else if (type.IsReferenceType()) {
     // L-values can be converted to any reference type.
@@ -2976,7 +3022,7 @@ DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP 
           llvm::formatv("reinterpret_cast from rvalue to reference type {0}",
                         type.TypeDescription()),
           location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
     // Casting to reference types gives an L-value result.
     is_rvalue = false;
@@ -2987,15 +3033,15 @@ DILASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP 
             llvm::formatv("casting of {0} to {1} is not implemented yet",
                           rhs_type.TypeDescription(), type.TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   return std::make_unique<CxxReinterpretCastNode>(location, type,
                                                   std::move(rhs), is_rvalue);
 }
 
-DILASTNodeUP DILParser::BuildCxxDynamicCast(CompilerType type, DILASTNodeUP rhs,
-                                          uint32_t location) {
+ASTNodeUP DILParser::BuildCxxDynamicCast(CompilerType type, ASTNodeUP rhs,
+                                         uint32_t location) {
   CompilerType pointee_type;
   CompilerType bad_type;
   if (type.IsPointerType()) {
@@ -3010,7 +3056,7 @@ DILASTNodeUP DILParser::BuildCxxDynamicCast(CompilerType type, DILASTNodeUP rhs,
                       "must be a reference or pointer type to a defined class",
                       type.TypeDescription()),
         location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
   // Dynamic casts are allowed only for record types.
   if (!pointee_type.IsRecordType()) {
@@ -3018,7 +3064,7 @@ DILASTNodeUP DILParser::BuildCxxDynamicCast(CompilerType type, DILASTNodeUP rhs,
         ErrorCode::kInvalidOperandType,
         llvm::formatv("{0} is not a class type", pointee_type.TypeDescription()),
         location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   auto expr_type = rhs->result_type();
@@ -3032,7 +3078,7 @@ DILASTNodeUP DILParser::BuildCxxDynamicCast(CompilerType type, DILASTNodeUP rhs,
             llvm::formatv("cannot use dynamic_cast to convert from {0} to {1}",
                           expr_type.TypeDescription(), type.TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
   // Dynamic casts are allowed only for record types.
   if (!expr_type.IsRecordType()) {
@@ -3040,7 +3086,7 @@ DILASTNodeUP DILParser::BuildCxxDynamicCast(CompilerType type, DILASTNodeUP rhs,
         ErrorCode::kInvalidOperandType,
         llvm::formatv("{0} is not a class type", expr_type.TypeDescription()),
         location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   // Expr type must be polymorphic.
@@ -3048,18 +3094,18 @@ DILASTNodeUP DILParser::BuildCxxDynamicCast(CompilerType type, DILASTNodeUP rhs,
     BailOut(ErrorCode::kInvalidOperandType,
             llvm::formatv("{0} is not polymorphic", expr_type.TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   // LLDB doesn't support dynamic_cast in the expression evaluator. We disable
   // it too to match the behaviour, but theoretically it can be implemented.
   BailOut(ErrorCode::kInvalidOperandType,
           "dynamic_cast is not supported in this context", location);
-  return std::make_unique<ErrorNode>(bad_type);
+  return std::make_unique<ErrorNode>();
 }
 
-DILASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, DILASTNodeUP rhs,
-                                uint32_t location) {
+ASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs,
+                                  uint32_t location) {
   CompilerType result_type;
   auto rhs_type = rhs->GetDereferencedResultType();
   CompilerType bad_type;
@@ -3074,7 +3120,7 @@ DILASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, DILASTNodeUP rhs,
       } else {
         bool synthetic_child = false;
         lldb::ValueObjectSP rhs_valobj_sp;
-        DILASTNode *ast_node = rhs.get();
+        ASTNode *ast_node = rhs.get();
         if (llvm::isa<IdentifierNode>(ast_node)) {
           IdentifierNode *id_node =
               (IdentifierNode*)ast_node;
@@ -3087,9 +3133,10 @@ DILASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, DILASTNodeUP rhs,
               rhs_type = child_sp->GetCompilerType().GetPointerType();
               std::unique_ptr<IdentifierInfo> new_info =
                   IdentifierInfo::FromValue(*child_sp);
-              DILASTNodeUP new_rhs = std::make_unique<IdentifierNode>(
-                  id_node->GetLocation(), id_node->name(), std::move(new_info),
-                  id_node->is_rvalue(), id_node->is_context_var());
+              ASTNodeUP new_rhs = std::make_unique<IdentifierNode>(
+                  id_node->GetLocation(), id_node->GetName(), m_use_dynamic,
+                  std::move(new_info), id_node->is_rvalue(),
+                  id_node->is_context_var());
               rhs = std::move(new_rhs);
               result_type = rhs->GetDereferencedResultType();
               synthetic_child = true;
@@ -3114,8 +3161,8 @@ DILASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, DILASTNodeUP rhs,
               llvm::formatv("indirection requires pointer operand ({0} invalid)",
                             rhs_type.TypeDescription()),
               location);
-          return std::make_unique<ErrorNode>(bad_type);
-	}
+          return std::make_unique<ErrorNode>();
+        }
       }
       break;
     }
@@ -3126,12 +3173,12 @@ DILASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, DILASTNodeUP rhs,
             llvm::formatv("cannot take the address of an rvalue of type {0}",
                           rhs_type.TypeDescription()),
             location);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
       if (rhs->is_bitfield()) {
         BailOut(ErrorCode::kInvalidOperandType,
                 "address of bit-field requested", location);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
       result_type = rhs_type.GetPointerType();
       break;
@@ -3177,18 +3224,17 @@ DILASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, DILASTNodeUP rhs,
             llvm::formatv(kInvalidOperandsToUnaryExpression,
                           rhs_type.TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   return std::make_unique<UnaryOpNode>(location, result_type, kind,
                                        std::move(rhs));
 }
 
-DILASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, DILASTNodeUP lhs,
-                                 DILASTNodeUP rhs,
-                                 uint32_t location) {
+ASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs,
+                                   ASTNodeUP rhs, uint32_t location) {
   // TODO: Get the "original" type (i.e. the one before implicit casts)
-  // from the DILASTNodeUP.
+  // from the ASTNodeUP.
   auto orig_lhs_type = lhs->GetDereferencedResultType();
   auto orig_rhs_type = rhs->GetDereferencedResultType();
 
@@ -3256,7 +3302,7 @@ DILASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, DILASTNodeUP lhs,
       // Shortcut for the case when the implicit conversion is not possible.
       if (llvm::isa<ErrorNode>(rhs)) {
         CompilerType bad_type;
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
       comp_assign_type = rhs->GetDereferencedResultType();
       break;
@@ -3312,8 +3358,8 @@ DILASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, DILASTNodeUP lhs,
       // Check to see if either lhs or rhs is an IdentifierNode. If so,
       // extract the valobj from the IdentifierNode & pass it to
       // BinaryOpNode (for help with looking up members of dynamic types).
-      const DILASTNode* lhs_ast_node = lhs.get();
-      const DILASTNode* rhs_ast_node = rhs.get();
+      const ASTNode *lhs_ast_node = lhs.get();
+      const ASTNode *rhs_ast_node = rhs.get();
       lldb::ValueObjectSP valobj_sp;
       if (llvm::isa<IdentifierNode>(lhs_ast_node)) {
         const IdentifierNode *id_node =
@@ -3339,12 +3385,11 @@ DILASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, DILASTNodeUP lhs,
                         orig_rhs_type.TypeDescription()),
           location);
   CompilerType bad_type;
-  return std::make_unique<ErrorNode>(bad_type);
+  return std::make_unique<ErrorNode>();
 }
 
-DILASTNodeUP DILParser::BuildTernaryOp(DILASTNodeUP cond, DILASTNodeUP lhs,
-                                  DILASTNodeUP rhs,
-                                  uint32_t location) {
+ASTNodeUP DILParser::BuildTernaryOp(ASTNodeUP cond, ASTNodeUP lhs,
+                                    ASTNodeUP rhs, uint32_t location) {
   CompilerType bad_type;
   // First check if the condition contextually converted to bool.
   auto cond_type = cond->GetDereferencedResultType();
@@ -3353,7 +3398,7 @@ DILASTNodeUP DILParser::BuildTernaryOp(DILASTNodeUP cond, DILASTNodeUP lhs,
         ErrorCode::kInvalidOperandType,
         llvm::formatv(kValueIsNotConvertibleToBool, cond_type.TypeDescription()),
         location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   auto lhs_type = lhs->GetDereferencedResultType();
@@ -3430,17 +3475,17 @@ DILASTNodeUP DILParser::BuildTernaryOp(DILASTNodeUP cond, DILASTNodeUP lhs,
           llvm::formatv("incompatible operand types ({0} and {1})",
                         lhs_type.TypeDescription(), rhs_type.TypeDescription()),
           location);
-  return std::make_unique<ErrorNode>(bad_type);
+  return std::make_unique<ErrorNode>();
 }
 
-DILASTNodeUP DILParser::BuildBinarySubscript(DILASTNodeUP lhs, DILASTNodeUP rhs,
-                                        uint32_t location) {
+ASTNodeUP DILParser::BuildBinarySubscript(ASTNodeUP lhs, ASTNodeUP rhs,
+                                          uint32_t location) {
   // C99 6.5.2.1p2: the expression e1[e2] is by definition precisely
   // equivalent to the expression *((e1)+(e2)).
   // We need to figure out which expression is "base" and which is "index".
 
-  DILASTNodeUP base;
-  DILASTNodeUP index;
+  ASTNodeUP base;
+  ASTNodeUP index;
   CompilerType bad_type;
 
   auto lhs_type = lhs->GetDereferencedResultType();
@@ -3460,7 +3505,7 @@ DILASTNodeUP DILParser::BuildBinarySubscript(DILASTNodeUP lhs, DILASTNodeUP rhs,
     index = std::move(lhs);
   } else {
     // Check to see if this might be a synthetic value.
-    const DILASTNode* ast_node = lhs.get();
+    const ASTNode *ast_node = lhs.get();
     if (llvm::isa<IdentifierNode>(ast_node)) {
       const IdentifierNode* id_node =
           static_cast<const IdentifierNode*>(ast_node);
@@ -3471,12 +3516,12 @@ DILASTNodeUP DILParser::BuildBinarySubscript(DILASTNodeUP lhs, DILASTNodeUP rhs,
       } else {
         BailOut(ErrorCode::kInvalidOperandType,
                 "subscripted value is not an array or pointer", location);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
     } else {
       BailOut(ErrorCode::kInvalidOperandType,
               "subscripted value is not an array or pointer", location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
   }
 
@@ -3488,14 +3533,14 @@ DILASTNodeUP DILParser::BuildBinarySubscript(DILASTNodeUP lhs, DILASTNodeUP rhs,
   if (!index_type.IsIntegerOrUnscopedEnumerationType()) {
     BailOut(ErrorCode::kInvalidOperandType, "array subscript is not an integer",
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   auto base_type = base->GetDereferencedResultType();
   if (base_type.IsPointerToVoid()) {
     BailOut(ErrorCode::kInvalidOperandType,
             "subscript of pointer to incomplete type 'void'", location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   return std::make_unique<ArraySubscriptNode>(
@@ -3503,15 +3548,14 @@ DILASTNodeUP DILParser::BuildBinarySubscript(DILASTNodeUP lhs, DILASTNodeUP rhs,
       std::move(index));
 }
 
-DILASTNodeUP DILParser::BuildMemberOf(DILASTNodeUP lhs, std::string member_id,
-                                     bool is_arrow,
-                                     uint32_t location) {
+ASTNodeUP DILParser::BuildMemberOf(ASTNodeUP lhs, std::string member_id,
+                                   bool is_arrow, uint32_t location) {
   CompilerType bad_type;
   auto lhs_type = lhs->GetDereferencedResultType();
   lldb::ValueObjectSP lhs_valobj_sp;
   lldb::ValueObjectSP deref_sp;
 
-  const DILASTNode *ast_node = lhs.get();
+  const ASTNode *ast_node = lhs.get();
   ValueObject *valobj = ast_node->valobj();
   if (valobj)
     lhs_valobj_sp = valobj->GetSP();
@@ -3529,7 +3573,7 @@ DILASTNodeUP DILParser::BuildMemberOf(DILASTNodeUP lhs, std::string member_id,
                               "did you mean to use '.'?",
                               lhs_type.TypeDescription()),
                 location);
-        return std::make_unique<ErrorNode>(bad_type);
+        return std::make_unique<ErrorNode>();
       }
     } else if (lhs_type.IsArrayType()) {
       // If LHS is an array, convert it to pointer.
@@ -3547,7 +3591,7 @@ DILASTNodeUP DILParser::BuildMemberOf(DILASTNodeUP lhs, std::string member_id,
                             "did you mean to use '->'?",
                             lhs_type.TypeDescription()),
               location);
-      return std::make_unique<ErrorNode>(bad_type);
+      return std::make_unique<ErrorNode>();
     }
   }
 
@@ -3558,7 +3602,7 @@ DILASTNodeUP DILParser::BuildMemberOf(DILASTNodeUP lhs, std::string member_id,
                 "member reference base type {0} is not a structure or union",
                 lhs_type.TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   auto [opt_member, idx] = GetMemberInfo(lhs_valobj_sp, lhs_type, member_id,
@@ -3569,7 +3613,7 @@ DILASTNodeUP DILParser::BuildMemberOf(DILASTNodeUP lhs, std::string member_id,
             llvm::formatv("no member named '{0}' in {1}", member_id,
                           lhs_type.GetFullyUnqualifiedType().TypeDescription()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   MemberInfo member = opt_member.value();
@@ -3597,30 +3641,24 @@ DILASTNodeUP DILParser::BuildMemberOf(DILASTNodeUP lhs, std::string member_id,
 }
 
 void DILParser::Expect(Token::Kind kind) {
-  if (m_dil_token.IsNot(kind)) {
+  if (CurToken().IsNot(kind)) {
     BailOut(ErrorCode::kUnknown,
-            llvm::formatv("expected {0}, got: {1}", TokenKindsJoin(kind),
-                          TokenDescription(m_dil_token)),
-            m_dil_token.GetLocation());
+            llvm::formatv("expected {0}, got: {1}", kind, CurToken()),
+            CurToken().GetLocation());
   }
 }
 
-template <typename... Ts>
-    void DILParser::ExpectOneOf(Token::Kind k, Ts... ks) {
-  static_assert((std::is_same_v<Ts, Token::Kind> && ...),
-                "ExpectOneOf can be only called with values of type "
-                "Kind");
-
-  if (!m_dil_token.IsOneOf(k, ks...)) {
+void DILParser::ExpectOneOf(std::vector<Token::Kind> kinds_vec) {
+  if (!CurToken().IsOneOf(kinds_vec)) {
     BailOut(ErrorCode::kUnknown,
             llvm::formatv("expected any of ({0}), got: {1}",
-                          TokenKindsJoin(k, ks...), TokenDescription(m_dil_token)),
-            m_dil_token.GetLocation());
+                          llvm::iterator_range(kinds_vec), CurToken()),
+            CurToken().GetLocation());
   }
 }
 
-DILASTNodeUP DILParser::BuildIncrementDecrement(UnaryOpKind kind, DILASTNodeUP rhs,
-                                              uint32_t location) {
+ASTNodeUP DILParser::BuildIncrementDecrement(UnaryOpKind kind, ASTNodeUP rhs,
+                                             uint32_t location) {
   assert((kind == UnaryOpKind::PreInc || kind == UnaryOpKind::PreDec ||
           kind == UnaryOpKind::PostInc || kind == UnaryOpKind::PostDec) &&
          "illegal unary op kind, expected inc/dec");
@@ -3638,14 +3676,14 @@ DILASTNodeUP DILParser::BuildIncrementDecrement(UnaryOpKind kind, DILASTNodeUP r
   if (rhs->is_rvalue()) {
     BailOut(ErrorCode::kInvalidOperandType,
             llvm::formatv("expression is not assignable"), location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
   if (!rhs->is_context_var() && !AllowSideEffects()) {
     BailOut(ErrorCode::kInvalidOperandType,
             llvm::formatv("side effects are not supported in this context: "
                           "trying to modify data at the target process"),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
   llvm::StringRef op_name =
       (kind == UnaryOpKind::PreInc || kind == UnaryOpKind::PostInc)
@@ -3656,21 +3694,21 @@ DILASTNodeUP DILParser::BuildIncrementDecrement(UnaryOpKind kind, DILASTNodeUP r
             llvm::formatv("cannot {0} expression of enum type '{1}'", op_name,
                           rhs_type.GetTypeName()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
   if (!rhs_type.IsScalarType() && !rhs_type.IsPointerType()) {
     BailOut(ErrorCode::kInvalidOperandType,
             llvm::formatv("cannot {0} value of type '{1}'", op_name,
                           rhs_type.GetTypeName()),
             location);
-    return std::make_unique<ErrorNode>(bad_type);
+    return std::make_unique<ErrorNode>();
   }
 
   return std::make_unique<UnaryOpNode>(location, rhs->result_type(), kind,
                                        std::move(rhs));
 }
 
-CompilerType DILParser::PrepareBinaryAddition(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
+CompilerType DILParser::PrepareBinaryAddition(ASTNodeUP &lhs, ASTNodeUP &rhs,
                                               uint32_t location,
                                               bool is_comp_assign) {
   // Operation '+' works for:
@@ -3714,8 +3752,7 @@ CompilerType DILParser::PrepareBinaryAddition(DILASTNodeUP& lhs, DILASTNodeUP& r
   return ptr_type;
 }
 
-CompilerType DILParser::PrepareBinarySubtraction(DILASTNodeUP& lhs,
-                                                 DILASTNodeUP& rhs,
+CompilerType DILParser::PrepareBinarySubtraction(ASTNodeUP &lhs, ASTNodeUP &rhs,
                                                  uint32_t location,
                                                  bool is_comp_assign) {
   // Operation '-' works for:
@@ -3777,7 +3814,7 @@ CompilerType DILParser::PrepareBinarySubtraction(DILASTNodeUP& lhs,
   return bad_type;
 }
 
-CompilerType DILParser::PrepareBinaryMulDiv(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
+CompilerType DILParser::PrepareBinaryMulDiv(ASTNodeUP &lhs, ASTNodeUP &rhs,
                                             bool is_comp_assign) {
   // Operations {'*', '/'} work for:
   //
@@ -3797,7 +3834,7 @@ CompilerType DILParser::PrepareBinaryMulDiv(DILASTNodeUP& lhs, DILASTNodeUP& rhs
   return bad_type;
 }
 
-CompilerType DILParser::PrepareBinaryRemainder(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
+CompilerType DILParser::PrepareBinaryRemainder(ASTNodeUP &lhs, ASTNodeUP &rhs,
                                                bool is_comp_assign) {
   // Operation '%' works for:
   //
@@ -3816,7 +3853,7 @@ CompilerType DILParser::PrepareBinaryRemainder(DILASTNodeUP& lhs, DILASTNodeUP& 
   return bad_type;;
 }
 
-CompilerType DILParser::PrepareBinaryBitwise(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
+CompilerType DILParser::PrepareBinaryBitwise(ASTNodeUP &lhs, ASTNodeUP &rhs,
                                              bool is_comp_assign) {
   // Operations {'&', '|', '^'} work for:
   //
@@ -3836,7 +3873,7 @@ CompilerType DILParser::PrepareBinaryBitwise(DILASTNodeUP& lhs, DILASTNodeUP& rh
   return bad_type;;
 }
 
-CompilerType DILParser::PrepareBinaryShift(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
+CompilerType DILParser::PrepareBinaryShift(ASTNodeUP &lhs, ASTNodeUP &rhs,
                                            bool is_comp_assign) {
   // Operations {'<<', '>>'} work for:
   //
@@ -3860,10 +3897,8 @@ CompilerType DILParser::PrepareBinaryShift(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
 }
 
 CompilerType DILParser::PrepareBinaryComparison(BinaryOpKind kind,
-                                                DILASTNodeUP& lhs,
-                                                DILASTNodeUP& rhs,
-                                                uint32_t location)
-{
+                                                ASTNodeUP &lhs, ASTNodeUP &rhs,
+                                                uint32_t location) {
   // Comparison works for:
   //
   //  {scalar,unscoped_enum} <-> {scalar,unscoped_enum}
@@ -3957,8 +3992,8 @@ CompilerType DILParser::PrepareBinaryComparison(BinaryOpKind kind,
   return bad_type;
 }
 
-CompilerType DILParser::PrepareBinaryLogical(const DILASTNodeUP& lhs,
-                                             const DILASTNodeUP& rhs) {
+CompilerType DILParser::PrepareBinaryLogical(const ASTNodeUP &lhs,
+                                             const ASTNodeUP &rhs) {
   CompilerType bad_type;
   auto lhs_type = lhs->GetDereferencedResultType();
   auto rhs_type = rhs->GetDereferencedResultType();
@@ -3983,10 +4018,9 @@ CompilerType DILParser::PrepareBinaryLogical(const DILASTNodeUP& lhs,
   return GetBasicType(m_ctx_scope, lldb::eBasicTypeBool);
 }
 
-CompilerType DILParser::PrepareCompositeAssignment(
-    CompilerType comp_assign_type,
-    const DILASTNodeUP& lhs,
-    uint32_t location) {
+CompilerType
+DILParser::PrepareCompositeAssignment(CompilerType comp_assign_type,
+                                      const ASTNodeUP &lhs, uint32_t location) {
   // In C++ the requirement here is that the expression is "assignable".
   // However in the debugger context side-effects are not allowed and the only
   // case where composite assignments are permitted is when modifying the
@@ -4034,7 +4068,8 @@ void DILParser::BailOut(ErrorCode code, const std::string& error,
 
   m_error = Status((uint32_t) code, lldb::eErrorTypeGeneric,
                    FormatDiagnostics(m_input_expr, error, loc));
-  m_dil_token = Token(Token::eof, "", 0);
+  // Advance the lexer token index to the end of the lexed tokens vector.
+  m_dil_lexer.ResetTokenIdx(m_dil_lexer.NumLexedTokens() - 1);
 }
 
 void DILParser::BailOut(Status error) {
@@ -4044,23 +4079,8 @@ void DILParser::BailOut(Status error) {
     return;
   }
   m_error = std::move(error);
-  m_dil_token = Token(Token::eof, "", 0);
-}
-
-void DILParser::ConsumeToken() {
-  if (m_dil_token.Is(Token::eof)) {
-    // Don't do anything if we're already at eof. This can happen if an error
-    // occurred during parsing and we're trying to bail out.
-    return;
-  }
-  m_dil_lexer.Advance();
-  m_dil_token = m_dil_lexer.GetCurrentToken();
-}
-
-std::string DILParser::TokenDescription(const Token& token) {
-  const auto& spelling = ((Token)token).GetSpelling();
-  llvm::StringRef kind_name = Token::GetTokenName(((Token)token).GetKind());;
-  return llvm::formatv("<'{0}' ({1})>", spelling, kind_name.str());
+  // Advance the lexer token index to the end of the lexed tokens vector.
+  m_dil_lexer.ResetTokenIdx(m_dil_lexer.NumLexedTokens() - 1);
 }
 
 bool DILParser::ImplicitConversionIsAllowed(CompilerType src, CompilerType dst,
@@ -4089,8 +4109,8 @@ bool DILParser::ImplicitConversionIsAllowed(CompilerType src, CompilerType dst,
   return false;
 }
 
-DILASTNodeUP DILParser::InsertImplicitConversion(DILASTNodeUP expr,
-                                                CompilerType type) {
+ASTNodeUP DILParser::InsertImplicitConversion(ASTNodeUP expr,
+                                              CompilerType type) {
   auto expr_type = expr->GetDereferencedResultType();
 
   // If the expression already has the required type, nothing to do here.
@@ -4121,9 +4141,8 @@ DILASTNodeUP DILParser::InsertImplicitConversion(DILASTNodeUP expr,
                         expr_type.TypeDescription(), type.TypeDescription()),
           expr->GetLocation());
   CompilerType bad_type;
-  return std::make_unique<ErrorNode>(bad_type);
+  return std::make_unique<ErrorNode>();
 }
-
 
 lldb::BasicType TypeDeclaration::GetBasicType() const {
   assert(m_is_builtin && "type declaration doesn't describe a builtin type");

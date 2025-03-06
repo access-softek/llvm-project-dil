@@ -9,19 +9,30 @@
 #ifndef LLDB_VALUEOBJECT_DILPARSER_H
 #define LLDB_VALUEOBJECT_DILPARSER_H
 
+#include "lldb/Target/ExecutionContextScope.h"
+#include "lldb/Utility/Status.h"
+#include "lldb/ValueObject/DILAST.h"
+#include "lldb/ValueObject/DILLexer.h"
+#include "lldb/ValueObject/DILLiteralParsers.h"
 #include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
 
-#include "lldb/Target/ExecutionContextScope.h"
-#include "lldb/Utility/Status.h"
-#include "lldb/ValueObject/DILAST.h"
-#include "lldb/ValueObject/DILLexer.h"
-#include "lldb/ValueObject/DILLiteralParsers.h"
 
 namespace lldb_private::dil {
+
+/// Struct to hold information about member fields. Used by the parser for the
+/// Data Inspection Language (DIL).
+struct MemberInfo {
+  std::optional<std::string> name;
+  CompilerType type;
+  std::optional<uint32_t> bitfield_size_in_bits;
+  bool is_synthetic;
+  bool is_dynamic;
+  lldb::ValueObjectSP val_obj_sp;
+};
 
 /// Finds the member field with the given name and type, stores the child index
 /// corresponding to the field in the idx vector and returns a MemberInfo
@@ -45,6 +56,7 @@ enum class ErrorCode : unsigned char {
   kInvalidExpressionSyntax,
   kInvalidNumericLiteral,
   kInvalidOperandType,
+  kLexerError,
   kUndeclaredIdentifier,
   kNotImplemented,
   kUBDivisionByZero,
@@ -58,9 +70,9 @@ enum class ErrorCode : unsigned char {
 };
 
 std::string FormatDiagnostics(llvm::StringRef input_expr,
-                              const std::string& message, uint32_t loc);
+                              const std::string &message, uint32_t loc);
 
-void SetUbStatus(Status& error, ErrorCode code);
+Status SetUbStatus(ErrorCode code);
 
 /// TypeDeclaration builds information about the literal type definition as
 /// type is being parsed. It doesn't perform semantic analysis for non-basic
@@ -138,178 +150,169 @@ class BuiltinFunctionDef {
 /// EBNF grammar for the parser is described in lldb/docs/dil-expr-lang.ebnf
 class DILParser {
  public:
-  explicit DILParser(llvm::StringRef dil_input_expr, DILLexer lexer,
-                     std::shared_ptr<ExecutionContextScope> exe_ctx_scope,
-                     lldb::DynamicValueType use_dynamic,
-                     bool use_synthetic, bool fragile_ivar,
-                     bool check_ptr_vs_member);
+   static llvm::Expected<ASTNodeUP> Parse(llvm::StringRef dil_input_expr,
+                                          DILLexer lexer,
+                                          std::shared_ptr<StackFrame> frame_sp,
+                                          lldb::DynamicValueType use_dynamic,
+                                          bool use_synthetic, bool fragile_ivar,
+                                          bool check_ptr_vs_member);
 
-  DILASTNodeUP Run(Status& error);
+   ~DILParser() = default;
 
-  ~DILParser() { m_ctx_scope.reset(); }
+   bool UseSynthetic() { return m_use_synthetic; }
 
-  bool UseSynthetic() { return m_use_synthetic; }
+   lldb::DynamicValueType UseDynamic() { return m_use_dynamic; }
 
-  lldb::DynamicValueType UseDynamic() { return m_use_dynamic; }
-
-  using PtrOperator = std::tuple<Token::Kind, uint32_t>;
+   using PtrOperator = std::tuple<Token::Kind, uint32_t>;
 
  private:
-  DILASTNodeUP ParseExpression();
-  DILASTNodeUP ParseAssignmentExpression();
-  DILASTNodeUP ParseLogicalOrExpression();
-  DILASTNodeUP ParseLogicalAndExpression();
-  DILASTNodeUP ParseInclusiveOrExpression();
-  DILASTNodeUP ParseExclusiveOrExpression();
-  DILASTNodeUP ParseAndExpression();
-  DILASTNodeUP ParseEqualityExpression();
-  DILASTNodeUP ParseRelationalExpression();
-  DILASTNodeUP ParseShiftExpression();
-  DILASTNodeUP ParseAdditiveExpression();
-  DILASTNodeUP ParseMultiplicativeExpression();
-  DILASTNodeUP ParseCastExpression();
-  DILASTNodeUP ParseUnaryExpression();
-  DILASTNodeUP ParsePostfixExpression();
-  DILASTNodeUP ParsePrimaryExpression();
+   explicit DILParser(llvm::StringRef dil_input_expr, DILLexer lexer,
+                      std::shared_ptr<StackFrame> frame_sp,
+                      lldb::DynamicValueType use_dynamic, bool use_synthetic,
+                      bool fragile_ivar, bool check_ptr_vs_member,
+                      Status &error);
 
-  std::optional<CompilerType> ParseTypeId(bool must_be_type_id = false);
-  void ParseTypeSpecifierSeq(TypeDeclaration* type_decl);
-  bool ParseTypeSpecifier(TypeDeclaration* type_decl);
-  std::string ParseNestedNameSpecifier();
-  std::string ParseTypeName();
+   llvm::Expected<ASTNodeUP> Run();
 
-  std::string ParseTemplateArgumentList();
-  std::string ParseTemplateArgument();
+   ASTNodeUP ParseExpression();
+   ASTNodeUP ParseAssignmentExpression();
+   ASTNodeUP ParseLogicalOrExpression();
+   ASTNodeUP ParseLogicalAndExpression();
+   ASTNodeUP ParseInclusiveOrExpression();
+   ASTNodeUP ParseExclusiveOrExpression();
+   ASTNodeUP ParseAndExpression();
+   ASTNodeUP ParseEqualityExpression();
+   ASTNodeUP ParseRelationalExpression();
+   ASTNodeUP ParseShiftExpression();
+   ASTNodeUP ParseAdditiveExpression();
+   ASTNodeUP ParseMultiplicativeExpression();
+   ASTNodeUP ParseCastExpression();
+   ASTNodeUP ParseUnaryExpression();
+   ASTNodeUP ParsePostfixExpression();
+   ASTNodeUP ParsePrimaryExpression();
 
-  PtrOperator ParsePtrOperator();
-  CompilerType ResolveTypeDeclarators(
-      CompilerType type,
-      const std::vector<PtrOperator>& ptr_operators);
+   std::optional<CompilerType> ParseTypeId(bool must_be_type_id = false);
+   void ParseTypeSpecifierSeq(TypeDeclaration *type_decl);
+   bool ParseTypeSpecifier(TypeDeclaration *type_decl);
+   std::string ParseNestedNameSpecifier();
+   std::string ParseTypeName();
 
-  bool IsSimpleTypeSpecifierKeyword(Token token) const;
-  bool IsCvQualifier(Token token) const;
-  bool IsPtrOperator(Token token) const;
-  bool HandleSimpleTypeSpecifier(TypeDeclaration* type_decl);
+   std::string ParseTemplateArgumentList();
+   std::string ParseTemplateArgument();
 
-  std::string ParseIdExpression();
-  std::string ParseUnqualifiedId();
-  DILASTNodeUP ParseNumericLiteral();
-  DILASTNodeUP ParseBooleanLiteral();
-  DILASTNodeUP ParseCharLiteral();
-  DILASTNodeUP ParseStringLiteral();
-  DILASTNodeUP ParsePointerLiteral();
-  DILASTNodeUP ParseNumericConstant();
-  DILASTNodeUP ParseFloatingLiteral(NumericLiteralParser& literal,
-                                    Token& token);
-  DILASTNodeUP ParseIntegerLiteral(NumericLiteralParser& literal,
-                                   Token& token);
-  DILASTNodeUP ParseBuiltinFunction(uint32_t loc,
+   PtrOperator ParsePtrOperator();
+   CompilerType
+   ResolveTypeDeclarators(CompilerType type,
+                          const std::vector<PtrOperator> &ptr_operators);
+
+   bool IsSimpleTypeSpecifierKeyword(Token token) const;
+   bool IsCvQualifier(Token token) const;
+   bool IsPtrOperator(Token token) const;
+   bool HandleSimpleTypeSpecifier(TypeDeclaration *type_decl);
+
+   std::string ParseIdExpression();
+   std::string ParseUnqualifiedId();
+   ASTNodeUP ParseNumericLiteral();
+   ASTNodeUP ParseBooleanLiteral();
+   ASTNodeUP ParseCharLiteral();
+   ASTNodeUP ParseStringLiteral();
+   ASTNodeUP ParsePointerLiteral();
+   ASTNodeUP ParseNumericConstant();
+   ASTNodeUP ParseFloatingLiteral(NumericLiteralParser &literal, Token &token);
+   ASTNodeUP ParseIntegerLiteral(NumericLiteralParser &literal, Token &token);
+   ASTNodeUP ParseBuiltinFunction(uint32_t loc,
                                   std::unique_ptr<BuiltinFunctionDef> func_def);
 
-  bool ImplicitConversionIsAllowed(CompilerType src, CompilerType dst,
-                                   bool is_src_literal_zero = false);
-  DILASTNodeUP InsertImplicitConversion(DILASTNodeUP expr, CompilerType type);
+   bool ImplicitConversionIsAllowed(CompilerType src, CompilerType dst,
+                                    bool is_src_literal_zero = false);
+   ASTNodeUP InsertImplicitConversion(ASTNodeUP expr, CompilerType type);
 
-  void ConsumeToken();
+   void BailOut(ErrorCode error_code, const std::string &error, uint32_t loc);
 
-  void BailOut(ErrorCode error_code, const std::string& error,
-               uint32_t loc);
+   void BailOut(Status error);
 
-  void BailOut(Status error);
+   void Expect(Token::Kind kind);
 
-  void Expect(Token::Kind kind);
+   void ExpectOneOf(std::vector<Token::Kind> kinds_vec);
 
-  std::string TokenDescription(const Token& token);
-
-  template <typename... Ts>
-  void ExpectOneOf(Token::Kind k, Ts... ks);
-
-  DILASTNodeUP BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
+   ASTNodeUP BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
                              uint32_t location);
-  DILASTNodeUP BuildCxxCast(Token::Kind kind, CompilerType type,
-                            DILASTNodeUP rhs, uint32_t location);
-  DILASTNodeUP BuildCxxDynamicCast(CompilerType type, DILASTNodeUP rhs,
-                                 uint32_t location);
-  DILASTNodeUP BuildCxxStaticCast(CompilerType type, DILASTNodeUP rhs,
-                                uint32_t location);
-  DILASTNodeUP BuildCxxStaticCastToScalar(CompilerType type, DILASTNodeUP rhs,
-                                        uint32_t location);
-  DILASTNodeUP BuildCxxStaticCastToEnum(CompilerType type, DILASTNodeUP rhs,
-                                      uint32_t location);
-  DILASTNodeUP BuildCxxStaticCastToPointer(CompilerType type, DILASTNodeUP rhs,
-                                         uint32_t location);
-  DILASTNodeUP BuildCxxStaticCastToNullPtr(CompilerType type, DILASTNodeUP rhs,
-                                         uint32_t location);
-  DILASTNodeUP BuildCxxStaticCastToReference(CompilerType type, DILASTNodeUP rhs,
-                                           uint32_t location);
-  DILASTNodeUP BuildCxxStaticCastForInheritedTypes(
-      CompilerType type, DILASTNodeUP rhs, uint32_t location);
-  DILASTNodeUP BuildCxxReinterpretCast(CompilerType type, DILASTNodeUP rhs,
-                                     uint32_t location);
-  DILASTNodeUP BuildUnaryOp(UnaryOpKind kind, DILASTNodeUP rhs,
+   ASTNodeUP BuildCxxCast(Token::Kind kind, CompilerType type, ASTNodeUP rhs,
                           uint32_t location);
-  DILASTNodeUP BuildIncrementDecrement(UnaryOpKind kind, DILASTNodeUP rhs,
-                                     uint32_t location);
-  DILASTNodeUP BuildBinaryOp(BinaryOpKind kind, DILASTNodeUP lhs, DILASTNodeUP rhs,
-                           uint32_t location);
-  CompilerType PrepareBinaryAddition(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
-                                     uint32_t location,
-                                     bool is_comp_assign);
-  CompilerType PrepareBinarySubtraction(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
-                                        uint32_t location,
-                                        bool is_comp_assign);
-  CompilerType PrepareBinaryMulDiv(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
-                                   bool is_comp_assign);
-  CompilerType PrepareBinaryRemainder(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
-                                      bool is_comp_assign);
-  CompilerType PrepareBinaryBitwise(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
-                                    bool is_comp_assign);
-  CompilerType PrepareBinaryShift(DILASTNodeUP& lhs, DILASTNodeUP& rhs,
-                                  bool is_comp_assign);
-  CompilerType PrepareBinaryComparison(BinaryOpKind kind, DILASTNodeUP& lhs,
-                                 DILASTNodeUP& rhs,
+   ASTNodeUP BuildCxxDynamicCast(CompilerType type, ASTNodeUP rhs,
                                  uint32_t location);
-  CompilerType PrepareBinaryLogical(const DILASTNodeUP& lhs,
-                                    const DILASTNodeUP& rhs);
-  DILASTNodeUP BuildBinarySubscript(DILASTNodeUP lhs, DILASTNodeUP rhs,
+   ASTNodeUP BuildCxxStaticCast(CompilerType type, ASTNodeUP rhs,
+                                uint32_t location);
+   ASTNodeUP BuildCxxStaticCastToScalar(CompilerType type, ASTNodeUP rhs,
+                                        uint32_t location);
+   ASTNodeUP BuildCxxStaticCastToEnum(CompilerType type, ASTNodeUP rhs,
+                                      uint32_t location);
+   ASTNodeUP BuildCxxStaticCastToPointer(CompilerType type, ASTNodeUP rhs,
+                                         uint32_t location);
+   ASTNodeUP BuildCxxStaticCastToNullPtr(CompilerType type, ASTNodeUP rhs,
+                                         uint32_t location);
+   ASTNodeUP BuildCxxStaticCastToReference(CompilerType type, ASTNodeUP rhs,
+                                           uint32_t location);
+   ASTNodeUP BuildCxxStaticCastForInheritedTypes(CompilerType type,
+                                                 ASTNodeUP rhs,
+                                                 uint32_t location);
+   ASTNodeUP BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
+                                     uint32_t location);
+   ASTNodeUP BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs, uint32_t location);
+   ASTNodeUP BuildIncrementDecrement(UnaryOpKind kind, ASTNodeUP rhs,
+                                     uint32_t location);
+   ASTNodeUP BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs, ASTNodeUP rhs,
+                           uint32_t location);
+   CompilerType PrepareBinaryAddition(ASTNodeUP &lhs, ASTNodeUP &rhs,
+                                      uint32_t location, bool is_comp_assign);
+   CompilerType PrepareBinarySubtraction(ASTNodeUP &lhs, ASTNodeUP &rhs,
+                                         uint32_t location,
+                                         bool is_comp_assign);
+   CompilerType PrepareBinaryMulDiv(ASTNodeUP &lhs, ASTNodeUP &rhs,
+                                    bool is_comp_assign);
+   CompilerType PrepareBinaryRemainder(ASTNodeUP &lhs, ASTNodeUP &rhs,
+                                       bool is_comp_assign);
+   CompilerType PrepareBinaryBitwise(ASTNodeUP &lhs, ASTNodeUP &rhs,
+                                     bool is_comp_assign);
+   CompilerType PrepareBinaryShift(ASTNodeUP &lhs, ASTNodeUP &rhs,
+                                   bool is_comp_assign);
+   CompilerType PrepareBinaryComparison(BinaryOpKind kind, ASTNodeUP &lhs,
+                                        ASTNodeUP &rhs, uint32_t location);
+   CompilerType PrepareBinaryLogical(const ASTNodeUP &lhs,
+                                     const ASTNodeUP &rhs);
+   ASTNodeUP BuildBinarySubscript(ASTNodeUP lhs, ASTNodeUP rhs,
                                   uint32_t location);
-  CompilerType PrepareCompositeAssignment(CompilerType comp_assign_type,
-                                          const DILASTNodeUP& lhs,
-                                          uint32_t location);
-  DILASTNodeUP BuildTernaryOp(DILASTNodeUP cond, DILASTNodeUP lhs, DILASTNodeUP rhs,
+   CompilerType PrepareCompositeAssignment(CompilerType comp_assign_type,
+                                           const ASTNodeUP &lhs,
+                                           uint32_t location);
+   ASTNodeUP BuildTernaryOp(ASTNodeUP cond, ASTNodeUP lhs, ASTNodeUP rhs,
                             uint32_t location);
-  DILASTNodeUP BuildMemberOf(DILASTNodeUP lhs, std::string member_id,
-                            bool is_arrow,
-                            uint32_t location);
+   ASTNodeUP BuildMemberOf(ASTNodeUP lhs, std::string member_id, bool is_arrow,
+                           uint32_t location);
 
-  bool AllowSideEffects() const { return m_allow_side_effects; }
+   bool AllowSideEffects() const { return m_allow_side_effects; }
 
-  void SetAllowSideEffects (bool allow_side_effects) {
-    m_allow_side_effects = allow_side_effects;
-  }
-
-  const IdentifierInfo& GetInfo(const IdentifierNode *node) {
-    return node->info();
-  }
+   void SetAllowSideEffects(bool allow_side_effects) {
+     m_allow_side_effects = allow_side_effects;
+   }
 
   void TentativeParsingRollback(uint32_t saved_idx) {
     m_error.Clear();
     m_dil_lexer.ResetTokenIdx(saved_idx);
-    m_dil_token = m_dil_lexer.GetCurrentToken();
   }
+
+  Token CurToken() { return m_dil_lexer.GetCurrentToken(); }
 
   // Parser doesn't own the evaluation context. The produced AST may depend on
   // it (for example, for source locations), so it's expected that expression
   // context will outlive the parser.
-  std::shared_ptr<ExecutionContextScope> m_ctx_scope;
+  std::shared_ptr<StackFrame> m_ctx_scope;
 
   llvm::StringRef m_input_expr;
 
   DILLexer m_dil_lexer;
-  // The token lexer is stopped at (aka "current token").
-  Token m_dil_token;
   // Holds an error if it occures during parsing.
-  Status m_error;
+  Status &m_error;
 
   bool m_allow_side_effects = true;
 
@@ -320,5 +323,76 @@ class DILParser {
 }; // class DILParser
 
 }  // namespace lldb_private::dil
+
+namespace llvm {
+template <>
+struct format_provider<lldb_private::dil::TypeDeclaration::TypeSpecifier> {
+  static void format(const lldb_private::dil::TypeDeclaration::TypeSpecifier &t,
+                     raw_ostream &OS, llvm::StringRef Options) {
+    switch (t) {
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kVoid:
+      OS << "void";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kBool:
+      OS << "bool";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kChar:
+      OS << "char";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kShort:
+      OS << "short";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kInt:
+      OS << "int";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kLong:
+      OS << "long";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kLongLong:
+      OS << "long long";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kFloat:
+      OS << "float";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kDouble:
+      OS << "double";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kLongDouble:
+      OS << "long double";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kWChar:
+      OS << "wchar_t";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kChar16:
+      OS << "char16_t";
+      break;
+    case lldb_private::dil::TypeDeclaration::TypeSpecifier::kChar32:
+      OS << "char32_t";
+      break;
+    default:
+      OS << "invalid type specifier";
+      break;
+    }
+  }
+};
+
+template <>
+struct format_provider<lldb_private::dil::TypeDeclaration::SignSpecifier> {
+  static void format(const lldb_private::dil::TypeDeclaration::SignSpecifier &t,
+                     raw_ostream &OS, llvm::StringRef Options) {
+    switch (t) {
+    case lldb_private::dil::TypeDeclaration::SignSpecifier::kSigned:
+      OS << "signed";
+      break;
+    case lldb_private::dil::TypeDeclaration::SignSpecifier::kUnsigned:
+      OS << "unsigned";
+      break;
+    default:
+      OS << "invalid sign specifier";
+      break;
+    }
+  }
+};
+} // namespace llvm
 
 #endif  // LLDB_VALUEOBJECT_DILPARSER_H

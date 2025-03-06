@@ -85,8 +85,7 @@ static void Diags_Report(uint32_t loc, dil::diag diag_id, std::string diag_msg)
 {
 }
 
-
-static unsigned getCharWidth(Token::Kind kind) {
+static unsigned GetCharWidth(Token::Kind kind) {
   switch (kind) {
   default: llvm_unreachable("Unknown token type!");
   case Token::char_constant:
@@ -103,7 +102,6 @@ static unsigned getCharWidth(Token::Kind kind) {
 NumericLiteralParser::NumericLiteralParser(llvm::StringRef TokSpelling,
                                            unsigned TokLoc,
                                            bool AllowHalfType,
-                                           //bool AllowFixedPoint,
                                            DILLexer &lexer,
                                            bool AllowMicrosoftExt) :
     ThisTokBegin(TokSpelling.begin()), ThisTokEnd(TokSpelling.end()) {
@@ -172,16 +170,12 @@ NumericLiteralParser::NumericLiteralParser(llvm::StringRef TokSpelling,
     switch (*s) {
     case 'R':
     case 'r':
-      //if (!AllowFixedPoint)
-      //  break;
       if (isFract || isAccum) break;
       if (!(saw_period || saw_exponent)) break;
       isFract = true;
       continue;
     case 'K':
     case 'k':
-      //if (!AllowFixedPoint)
-      //  break;
       if (isFract || isAccum) break;
       if (!(saw_period || saw_exponent)) break;
       isAccum = true;
@@ -189,7 +183,7 @@ NumericLiteralParser::NumericLiteralParser(llvm::StringRef TokSpelling,
     case 'h':      // FP Suffix for "half".
     case 'H':
       // OpenCL Extension v1.2 s9.5 - h or H suffix for half type.
-      if (!(AllowHalfType))// || AllowFixedPoint))
+      if (!(AllowHalfType))
         break;
       if (isIntegerLiteral()) break;  // Error for integer constant.
       if (HasSize)
@@ -203,7 +197,6 @@ NumericLiteralParser::NumericLiteralParser(llvm::StringRef TokSpelling,
       if (HasSize)
         break;
       HasSize = true;
-
 
       isFloat = true;
       continue;  // Success.
@@ -812,7 +805,6 @@ static bool ProcessUCNEscape(const char *ThisTokBegin, const char *&ThisTokBuf,
                              bool in_char_string_literal = false) {
 
   bool HasError;
-  //const char *UcnBegin = ThisTokBuf;
   bool IsDelimitedEscapeSequence = false;
   bool IsNamedEscapeSequence = false;
   if (ThisTokBuf[1] == 'N') {
@@ -1225,7 +1217,7 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
       ++buffer_begin;
       continue;
     }
-    unsigned CharWidth = getCharWidth(Kind);
+    unsigned CharWidth = GetCharWidth(Kind);
     uint64_t result =
         ProcessCharEscape(TokBegin, begin, end, HadError, Loc,CharWidth,
                           StringLiteralEvalMethod::Evaluated);
@@ -1287,7 +1279,6 @@ StringLiteralParser::StringLiteralParser(llvm::ArrayRef<Token> StringToks,
                                          DILLexer &lexer,
                                          StringLiteralEvalMethod EvalMethod) :
     MaxTokenLength(0), SizeBound(0), CharByteWidth(0),
-    //Kind(Token::unknown),
     ResultPtr(ResultBuf.data()),
     EvalMethod(EvalMethod), m_lexer(lexer), hadError(false) {
   init(StringToks, lexer);
@@ -1353,7 +1344,7 @@ void StringLiteralParser::init(llvm::ArrayRef<Token> StringToks,
   // TODO: K&R warning: "traditional C rejects string constant concatenation"
 
   // Get the width in bytes of char/wchar_t/char16_t/char32_t
-  CharByteWidth = getCharWidth(Kind);
+  CharByteWidth = GetCharWidth(Kind);
   assert((CharByteWidth & 7) == 0 && "Assumes character size is byte multiple");
   CharByteWidth /= 8;
 

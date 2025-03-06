@@ -521,16 +521,14 @@ ValueObjectSP StackFrame::GetValueForVariableExpressionPath(
   if (use_DIL)
     return DILGetValueForVariableExpressionPath(var_expr, use_dynamic, options,
                                                 var_sp, error);
-  else
-    return LegacyGetValueForVariableExpressionPath(var_expr, use_dynamic,
-                                                   options, var_sp, error);
+
+  return LegacyGetValueForVariableExpressionPath(var_expr, use_dynamic, options,
+                                                 var_sp, error);
 }
 
 ValueObjectSP StackFrame::DILGetValueForVariableExpressionPath(
-      llvm::StringRef var_expr, lldb::DynamicValueType use_dynamic,
-      uint32_t options, lldb::VariableSP &var_sp, Status &error)
-{
-  ValueObjectSP ret_val;
+    llvm::StringRef var_expr, lldb::DynamicValueType use_dynamic,
+    uint32_t options, lldb::VariableSP &var_sp, Status &error) {
 
   const bool check_ptr_vs_member =
       (options & eExpressionPathOptionCheckPtrVsMember) != 0;
@@ -539,41 +537,34 @@ ValueObjectSP StackFrame::DILGetValueForVariableExpressionPath(
   const bool no_synth_child =
       (options & eExpressionPathOptionsNoSyntheticChildren) != 0;
 
-  // Lex the expression
+  // Lex the expression.
   auto lex_or_err = dil::DILLexer::Create(var_expr);
   if (!lex_or_err) {
     error = Status::FromError(lex_or_err.takeError());
     return ValueObjectSP();
   }
-  dil::DILLexer lexer = *lex_or_err;
 
   // Parse the expression.
-  Status parse_error, eval_error;
-  dil::DILParser parser(var_expr, lexer, shared_from_this(), use_dynamic,
-                        !no_synth_child, !no_fragile_ivar, check_ptr_vs_member);
-  dil::DILASTNodeUP tree = parser.Run(parse_error);
-  if (parse_error.Fail()) {
-    error = std::move(parse_error);
+  auto tree_or_error = dil::DILParser::Parse(
+      var_expr, std::move(*lex_or_err), shared_from_this(), use_dynamic,
+      !no_synth_child, !no_fragile_ivar, check_ptr_vs_member);
+  if (!tree_or_error) {
+    error = Status::FromError(tree_or_error.takeError());
     return ValueObjectSP();
   }
 
   // Evaluate the parsed expression.
   lldb::TargetSP target = this->CalculateTarget();
-  dil::DILInterpreter interpreter(target, var_expr, use_dynamic);
+  dil::Interpreter interpreter(target, var_expr, use_dynamic,
+                               shared_from_this());
 
-  ret_val = interpreter.DILEval(tree.get(), target, eval_error);
-  if (eval_error.Fail()) {
-    error = std::move(eval_error);
+  auto valobj_or_error = interpreter.DILEval((*tree_or_error).get(), target);
+  if (!valobj_or_error) {
+    error = Status::FromError(valobj_or_error.takeError());
     return ValueObjectSP();
   }
 
-  if (ret_val) {
-    var_sp = ret_val->GetVariable();
-    if (!var_sp && ret_val->GetParent()) {
-      var_sp = ret_val->GetParent()->GetVariable();
-    }
-  }
-  return ret_val;
+  return *valobj_or_error;
 }
 
 ValueObjectSP StackFrame::LegacyGetValueForVariableExpressionPath(

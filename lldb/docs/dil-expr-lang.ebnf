@@ -75,7 +75,6 @@ primary_expression = numeric_literal
                    | boolean_literal
                    | pointer_literal
                    | id_expression
-                   | "this"
                    | "(" expression ")"
                    | builtin_func ;
 

@@ -179,7 +179,8 @@ convertUTF8SequenceAndAdvance(llvm::StringRef::iterator &cur_pos,
   return {Status, CodePoint, size};
 }
 
-static void SkipUnicodeWhitespaces(llvm::StringRef &remainder) {
+static void SkipUnicodeWhitespaces(llvm::StringRef &remainder,
+                                   uint32_t &width) {
   llvm::StringRef::iterator cur_pos = remainder.begin();
   uint32_t length = 0;
   while (true) {
@@ -188,27 +189,30 @@ static void SkipUnicodeWhitespaces(llvm::StringRef &remainder) {
     if (Status != llvm::conversionOK || !IsUnicodeWhitespace(CodePoint))
       break;
     length += size;
+    width += llvm::sys::unicode::charWidth(CodePoint);
   }
   remainder = remainder.drop_front(length);
 }
 
-static void SkipWhitespaces(llvm::StringRef &remainder) {
+static void SkipWhitespaces(llvm::StringRef &remainder, uint32_t &width) {
   llvm::StringRef::iterator cur_pos;
   do {
     cur_pos = remainder.begin();
     remainder = remainder.ltrim();
-    SkipUnicodeWhitespaces(remainder);
+    width += remainder.begin() - cur_pos;
+    SkipUnicodeWhitespaces(remainder, width);
   } while (remainder.begin() != cur_pos);
 }
 
-static std::optional<llvm::StringRef> IsWord(llvm::StringRef expr,
-                                             llvm::StringRef &remainder) {
+static std::optional<llvm::StringRef>
+IsWord(llvm::StringRef expr, llvm::StringRef &remainder, uint32_t &width) {
   llvm::StringRef::iterator cur_pos = remainder.begin();
   llvm::StringRef::iterator start = cur_pos;
   auto [Status, CodePoint, size] =
       convertUTF8SequenceAndAdvance(cur_pos, remainder.end());
   if (Status == llvm::conversionOK &&
       IsValidIdentifierStartCodePoint(CodePoint)) {
+    width = llvm::sys::unicode::charWidth(CodePoint);
     unsigned length = size;
     while (true) {
       auto [Status, CodePoint, size] =
@@ -216,6 +220,7 @@ static std::optional<llvm::StringRef> IsWord(llvm::StringRef expr,
       if (Status != llvm::conversionOK ||
           !IsValidIdentifierContinuationCodePoint(CodePoint))
         break;
+      width += llvm::sys::unicode::charWidth(CodePoint);
       length += size;
     }
 
@@ -287,6 +292,7 @@ llvm::Expected<DILLexer> DILLexer::Create(llvm::StringRef expr) {
       return t.takeError();
     }
   } while (tokens.back().GetKind() != Token::eof);
+
   return DILLexer(expr, std::move(tokens));
 }
 
@@ -294,11 +300,9 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
                                     llvm::StringRef &remainder,
                                     uint32_t &position) {
   llvm::StringRef::iterator start = remainder.begin();
-  SkipWhitespaces(remainder);
-  if (start < remainder.begin()) {
-    llvm::StringRef skipped(start, remainder.begin() - start);
-    position += llvm::sys::unicode::columnWidthUTF8(skipped);
-  }
+  uint32_t width = 0;
+  SkipWhitespaces(remainder, width);
+  position += width;
 
   // Check to see if we've reached the end of our input string.
   if (remainder.empty())
@@ -311,7 +315,8 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
     position += number.size();
     return token;
   } else {
-    std::optional<llvm::StringRef> maybe_word = IsWord(expr, remainder);
+    uint32_t width = 0;
+    std::optional<llvm::StringRef> maybe_word = IsWord(expr, remainder, width);
     if (maybe_word) {
       llvm::StringRef word = *maybe_word;
       Token::Kind kind = llvm::StringSwitch<Token::Kind>(word)
@@ -341,7 +346,7 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
                             .Case("wchar_t", Token::kw_wchar_t)
                             .Default(Token::identifier);
       auto token = Token(kind, word.str(), position);
-      position += llvm::sys::unicode::columnWidthUTF8(word.str());
+      position += width;
       return token;
     }
   }

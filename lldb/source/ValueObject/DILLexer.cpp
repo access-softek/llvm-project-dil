@@ -16,7 +16,6 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Unicode.h"
-#include "llvm/Support/UnicodeCharRanges.h"
 #include <tuple>
 
 namespace lldb_private::dil {
@@ -135,17 +134,6 @@ static bool IsLetter(char c) {
 
 static bool IsDigit(char c) { return ('0' <= c && c <= '9'); }
 
-static const llvm::sys::UnicodeCharRange UnicodeWhitespaceCharRanges[] = {
-    {0x0085, 0x0085}, {0x00A0, 0x00A0}, {0x1680, 0x1680},
-    {0x180E, 0x180E}, {0x2000, 0x200A}, {0x2028, 0x2029},
-    {0x202F, 0x202F}, {0x205F, 0x205F}, {0x3000, 0x3000}};
-
-static bool IsUnicodeWhitespace(uint32_t Codepoint) {
-  static const llvm::sys::UnicodeCharSet UnicodeWhitespaceChars(
-      UnicodeWhitespaceCharRanges);
-  return UnicodeWhitespaceChars.contains(Codepoint);
-}
-
 inline bool IsOperator(unsigned char c) {
   using namespace clang::charinfo;
   return (InfoTable[c] & (CHAR_PUNCT | CHAR_PERIOD)) != 0;
@@ -157,7 +145,7 @@ static bool IsValidIdentifierContinuationCodePoint(uint32_t c) {
       return true;
     return !IsOperator(c) && !clang::isWhitespace(c);
   }
-  return !IsUnicodeWhitespace(c);
+  return true;
 }
 
 static bool IsValidIdentifierStartCodePoint(uint32_t c) {
@@ -177,31 +165,6 @@ convertUTF8SequenceAndAdvance(llvm::StringRef::iterator &cur_pos,
       (const llvm::UTF8 **)&cur_pos, (const llvm::UTF8 *)end, &CodePoint,
       llvm::strictConversion);
   return {Status, CodePoint, size};
-}
-
-static void SkipUnicodeWhitespaces(llvm::StringRef &remainder,
-                                   uint32_t &width) {
-  llvm::StringRef::iterator cur_pos = remainder.begin();
-  uint32_t length = 0;
-  while (true) {
-    auto [Status, CodePoint, size] =
-        convertUTF8SequenceAndAdvance(cur_pos, remainder.end());
-    if (Status != llvm::conversionOK || !IsUnicodeWhitespace(CodePoint))
-      break;
-    length += size;
-    width += llvm::sys::unicode::charWidth(CodePoint);
-  }
-  remainder = remainder.drop_front(length);
-}
-
-static void SkipWhitespaces(llvm::StringRef &remainder, uint32_t &width) {
-  llvm::StringRef::iterator cur_pos;
-  do {
-    cur_pos = remainder.begin();
-    remainder = remainder.ltrim();
-    width += remainder.begin() - cur_pos;
-    SkipUnicodeWhitespaces(remainder, width);
-  } while (remainder.begin() != cur_pos);
 }
 
 static std::optional<llvm::StringRef>
@@ -300,9 +263,8 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
                                     llvm::StringRef &remainder,
                                     uint32_t &position) {
   llvm::StringRef::iterator start = remainder.begin();
-  uint32_t width = 0;
-  SkipWhitespaces(remainder, width);
-  position += width;
+  remainder = remainder.ltrim();
+  position += remainder.begin() - start;
 
   // Check to see if we've reached the end of our input string.
   if (remainder.empty())

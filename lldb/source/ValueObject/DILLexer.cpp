@@ -12,38 +12,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/ValueObject/DILLexer.h"
-//#include "llvm/ADT/StringMap.h"
+#include "clang/Basic/CharInfo.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/ConvertUTF.h"
+#include "llvm/Support/Unicode.h"
+#include <tuple>
 
 namespace lldb_private::dil {
-
-/*
-const llvm::StringMap<Token::Kind> Keywords = {
-    {"bool", Token::kw_bool},
-    {"char", Token::kw_char},
-    {"char16_t", Token::kw_char16_t},
-    {"char32_t", Token::kw_char32_t},
-    {"const", Token::kw_const},
-    {"double", Token::kw_double},
-    {"dynamic_cast", Token::kw_dynamic_cast},
-    {"false", Token::kw_false},
-    {"float", Token::kw_float},
-    {"int", Token::kw_int},
-    {"long", Token::kw_long},
-    {"namespace", Token::kw_namespace},
-    {"nullptr", Token::kw_nullptr},
-    {"reinterpret_cast", Token::kw_reinterpret_cast},
-    {"short", Token::kw_short},
-    {"signed", Token::kw_signed},
-    {"sizeof", Token::kw_sizeof},
-    {"static_cast", Token::kw_static_cast},
-    {"this", Token::kw_this},
-    {"true", Token::kw_true},
-    {"unsigned", Token::kw_unsigned},
-    {"void", Token::kw_void},
-    {"volatile", Token::kw_volatile},
-    {"wchar_t", Token::kw_wchar_t}};
-*/
 
 llvm::StringRef Token::GetTokenName(Kind kind) {
   switch (kind){
@@ -153,22 +128,53 @@ llvm::StringRef Token::GetTokenName(Kind kind) {
   }
 }
 
-static bool IsLetter (char c) {
+static bool IsLetter(char c) {
   return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z');
 }
 
-static bool IsDigit (char c) { return ('0' <= c && c <= '9'); }
+static bool IsDigit(char c) { return ('0' <= c && c <= '9'); }
 
-static std::optional<llvm::StringRef> IsWord(llvm::StringRef expr,
-                                             llvm::StringRef &remainder) {
-  // Find the longest prefix consisting of letters, digits, underscors and
-  // '$'. If it doesn't start with a digit, then it's a word.
-  llvm::StringRef candidate = remainder.take_while(
-      [](char c) { return IsDigit(c) || IsLetter(c) || c == '_' || c == '$'; });
-  if (candidate.empty() || IsDigit(candidate[0]))
+inline bool IsOperator(unsigned char c) {
+  using namespace clang::charinfo;
+  return (InfoTable[c] & (CHAR_PUNCT | CHAR_PERIOD)) != 0;
+}
+
+static bool IsValidIdentifierContinuation(char c) {
+  if (c == '$')
+    return true;
+  return !IsOperator(c) && !clang::isWhitespace(c);
+}
+
+static std::optional<llvm::StringRef> IsWord(llvm::StringRef &remainder) {
+  llvm::StringRef::iterator cur_pos = remainder.begin();
+  llvm::StringRef::iterator start = cur_pos;
+
+  if (IsDigit(*cur_pos))
     return std::nullopt;
-  remainder = remainder.drop_front(candidate.size());
-  return candidate;
+
+  while (cur_pos < remainder.end()) {
+    uint8_t c = *cur_pos;
+    if (c < 0x80) {
+      if (IsValidIdentifierContinuation(c)) {
+        cur_pos++;
+        continue;
+      } else
+        break;
+    }
+    if (llvm::isLegalUTF8Sequence((const llvm::UTF8 *)cur_pos,
+                                  (const llvm::UTF8 *)remainder.end())) {
+      cur_pos += llvm::getNumBytesForUTF8(*cur_pos);
+      continue;
+    }
+    break;
+  }
+
+  if (cur_pos == start)
+    return std::nullopt;
+
+  auto length = cur_pos - start;
+  remainder = remainder.drop_front(length);
+  return llvm::StringRef(start, length);
 }
 
 static void ConsumeNumberBody(uint32_t &length, char &prev_ch,
@@ -224,35 +230,37 @@ static std::optional<llvm::StringRef> IsNumber(llvm::StringRef expr,
 llvm::Expected<DILLexer> DILLexer::Create(llvm::StringRef expr) {
   std::vector<Token> tokens;
   llvm::StringRef remainder = expr;
+  uint32_t position = 0;
   do {
-    if (llvm::Expected<Token> t = Lex(expr, remainder)) {
+    if (llvm::Expected<Token> t = Lex(expr, remainder, position)) {
       tokens.push_back(std::move(*t));
     } else {
       return t.takeError();
     }
   } while (tokens.back().GetKind() != Token::eof);
+
   return DILLexer(expr, std::move(tokens));
 }
 
-
 llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
-                                    llvm::StringRef &remainder) {
-  // Skip over whitespace (spaces).
+                                    llvm::StringRef &remainder,
+                                    uint32_t &position) {
+  llvm::StringRef::iterator start = remainder.begin();
   remainder = remainder.ltrim();
-  llvm::StringRef::iterator cur_pos = remainder.begin();
+  position += remainder.begin() - start;
 
   // Check to see if we've reached the end of our input string.
   if (remainder.empty())
-    return Token(Token::eof, "", (uint32_t)expr.size());
+    return Token(Token::eof, "", position);
 
-  uint32_t position = cur_pos - expr.begin();;
-  llvm::StringRef::iterator start = cur_pos;
   std::optional<llvm::StringRef> maybe_number = IsNumber(expr, remainder);
   if (maybe_number) {
     std::string number = (*maybe_number).str();
-    return Token(Token::numeric_constant, number, position);
+    auto token = Token(Token::numeric_constant, number, position);
+    position += number.size();
+    return token;
   } else {
-    std::optional<llvm::StringRef> maybe_word = IsWord(expr, remainder);
+    std::optional<llvm::StringRef> maybe_word = IsWord(remainder);
     if (maybe_word) {
       llvm::StringRef word = *maybe_word;
       Token::Kind kind = llvm::StringSwitch<Token::Kind>(word)
@@ -281,11 +289,12 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
                             .Case("volatile", Token::kw_volatile)
                             .Case("wchar_t", Token::kw_wchar_t)
                             .Default(Token::identifier);
-      return Token(kind, word.str(), (uint32_t)position);
+      auto token = Token(kind, word.str(), position);
+      position += llvm::sys::unicode::columnWidthUTF8(word.str());
+      return token;
     }
   }
 
-  cur_pos = start;
   constexpr std::pair<Token::Kind, const char *> operators[] = {
     {Token::l_square, "["},
     {Token::r_square, "]"},
@@ -332,8 +341,11 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
     {Token::tilde, "~"},
   };
   for (auto [kind, str] : operators) {
-    if (remainder.consume_front(str))
-      return Token(kind, str, position);
+    if (remainder.consume_front(str)) {
+      auto token = Token(kind, str, position);
+      position += strlen(str);
+      return token;
+    }
   }
 
   // Unrecognized character(s) in string; unable to lex it.

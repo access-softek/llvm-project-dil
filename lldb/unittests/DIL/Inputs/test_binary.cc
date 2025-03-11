@@ -1196,6 +1196,14 @@ static void TestStringParsing() {
   // BREAK(TestStringParsing)
 }
 
+static void TestUnicodeInput() {
+  int フー = 1;
+  int фу = 2;
+  int föo = 3;
+  int שלום = 4;
+  // BREAK(TestUnicodeInput)
+}
+
 namespace test_binary {
 
 void main() {
@@ -1250,6 +1258,7 @@ void main() {
 
   TestCharParsing();
   TestStringParsing();
+  TestUnicodeInput();
 
   // BREAK HERE
 }

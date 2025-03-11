@@ -121,8 +121,9 @@ TEST(DILLexerTests, MultiTokenLexTest) {
 TEST(DILLexerTests, IdentifiersTest) {
   // These strings should lex into identifier tokens.
   std::vector<std::string> valid_identifiers = {
-      "$My_name1", "$pc",  "abcd", "_", "_a",     "_a_",      "$",
-      "a_b",       "kw_this", "self", "a", "MyName", "kw_namespace"};
+      "$My_name1", "$pc",     "abcd", "_", "_a",     "_a_",          "$",
+      "a_b",       "kw_this", "self", "a", "MyName", "kw_namespace", "föo",
+      "🍫",        "שלום"};
 
   // The lexer can lex these strings, but they should not be identifiers.
   std::vector<std::string> invalid_identifiers = {"", "::", "(", ")", "234", "2"};

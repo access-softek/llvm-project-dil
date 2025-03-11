@@ -227,8 +227,8 @@ class DILLexer {
       m_expr(dil_expr), m_lexed_tokens(std::move(lexed_tokens)),
       m_tokens_idx(0) {}
 
-  static llvm::Expected<Token> Lex(llvm::StringRef expr,
-                                   llvm::StringRef &remainder);
+  static llvm::Expected<Token>
+  Lex(llvm::StringRef expr, llvm::StringRef &remainder, uint32_t &position);
 
   bool IsStringLiteral(Token::Kind kind) {
     return (kind == Token::string_literal ||

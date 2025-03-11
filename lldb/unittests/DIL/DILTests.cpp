@@ -3680,3 +3680,20 @@ TEST_F(EvalTest, DISABLED_TestStringParsing) {
   EXPECT_THAT(Eval("*\"abc\""), IsError("string literals are not supported"));
 }
 #endif
+
+TEST_F(EvalTest, TestUnicodeInput) {
+  EXPECT_THAT(Eval("フー + 1"), IsEqual("2"));
+  EXPECT_THAT(Eval("1 + フー"), IsEqual("2"));
+  EXPECT_THAT(Eval("föo + 1"), IsEqual("4"));
+  EXPECT_THAT(Eval("שלום + 1"), IsEqual("5"));
+
+  // Check diagnostic pointer location
+  EXPECT_THAT(Eval("фу + бар"),
+              IsError("<expr:1:6>: use of undeclared identifier 'бар'\n"
+                      "фу + бар\n"
+                      "     ^"));
+  EXPECT_THAT(Eval("フー + бар"),
+              IsError("<expr:1:8>: use of undeclared identifier 'бар'\n"
+                      "フー + бар\n"
+                      "       ^"));
+}

@@ -2581,7 +2581,7 @@ DILASTNodeUP DILParser::BuildCStyleCast(CompilerType type, DILASTNodeUP rhs,
 
   } else if (type.IsNullPtrType()) {
     // Cast to nullptr type.
-    if (!type.IsNullPtrType() && !rhs->is_literal_zero()) {
+    if (!rhs_type.IsNullPtrType() && !rhs->is_literal_zero()) {
       BailOut(ErrorCode::kInvalidOperandType,
               llvm::formatv("C-style cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),

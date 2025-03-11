@@ -1432,20 +1432,21 @@ TEST_F(EvalTest, TestCStyleCastPointer) {
   EXPECT_THAT(Eval("(int&*)ap"), IsError("'type name' declared as a pointer "
                                          "to a reference of type 'int &'"));
 
-  GTEST_SKIP() << "Segfault when retrieving result value in the matcher";
-  EXPECT_THAT(Eval("(nullptr_t)nullptr"),
+  EXPECT_THAT(Eval("(std::__1::nullptr_t)nullptr"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  EXPECT_THAT(Eval("(nullptr_t)0"),
+  EXPECT_THAT(Eval("(std::__1::nullptr_t)0"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 
-  EXPECT_THAT(Eval("(nullptr_t)1"),
-              IsError("C-style cast from 'int' to 'nullptr_t' (canonically "
-                      "referred to as 'std::nullptr_t')"
-                      " is not allowed"));
-  EXPECT_THAT(Eval("(nullptr_t)ap"),
-              IsError("C-style cast from 'int *' to 'nullptr_t' (canonically "
-                      "referred to as 'std::nullptr_t')"
-                      " is not allowed"));
+  EXPECT_THAT(
+      Eval("(nullptr_t)1"),
+      IsError("C-style cast from 'int' to 'std::__1::nullptr_t' (canonically "
+              "referred to as 'std::nullptr_t')"
+              " is not allowed"));
+  EXPECT_THAT(
+      Eval("(nullptr_t)ap"),
+      IsError("C-style cast from 'int *' to 'std::__1::nullptr_t' (canonically "
+              "referred to as 'std::nullptr_t')"
+              " is not allowed"));
 }
 
 TEST_F(EvalTest, TestCStyleCastNullptrType) {
@@ -1601,10 +1602,9 @@ TEST_F(EvalTest, TestCxxStaticCast) {
               IsError("two or more data types in declaration of 'type name'"));
 
   // Cast to nullptr.
-  GTEST_SKIP() << "Segfault when retrieving result value in the matcher";
-  EXPECT_THAT(Eval("static_cast<nullptr_t>(nullptr)"),
+  EXPECT_THAT(Eval("static_cast<std::__1::nullptr_t>(nullptr)"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  EXPECT_THAT(Eval("static_cast<nullptr_t>(0)"),
+  EXPECT_THAT(Eval("static_cast<std::__1::nullptr_t>(0)"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 }
 
@@ -2587,7 +2587,8 @@ TEST_F(EvalTest, TestTernaryOperator) {
               IsEqual(Is32Bit() ? "0x0000000f" : "0x000000000000000f"));
   EXPECT_THAT(Eval("true ? nullptr : (int*)15"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-
+  EXPECT_THAT(Eval("true ? 0 : nullptr"),
+              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
   EXPECT_THAT(Eval("true ? nullptr : 0"),
               IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 
@@ -2644,12 +2645,8 @@ TEST_F(EvalTest, TestTernaryOperator) {
 
   // Use pointers and arrays in bool context.
   EXPECT_THAT(Eval("pi ? 1 : 2"), IsEqual("1"));
-  EXPECT_THAT(Eval("arr2 ? 1 : 2"), IsEqual("1"));
-
-  GTEST_SKIP() << "Segfault when retrieving result value in the matcher";
-  EXPECT_THAT(Eval("true ? 0 : nullptr"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
   EXPECT_THAT(Eval("nullptr ? 1 : 2"), IsEqual("2"));
+  EXPECT_THAT(Eval("arr2 ? 1 : 2"), IsEqual("1"));
 }
 
 TEST_F(EvalTest, TestSizeOf) {

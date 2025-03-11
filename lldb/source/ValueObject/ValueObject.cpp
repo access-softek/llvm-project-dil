@@ -1181,6 +1181,8 @@ llvm::Expected<bool> ValueObject::GetValueAsBool() {
   }
   if (val_type.IsArrayType())
     return GetAddressOf() != 0;
+  if (val_type.IsNullPtrType())
+    return false;
 
   return llvm::make_error<llvm::StringError>("type cannot be converted to bool",
                                              llvm::inconvertibleErrorCode());
@@ -3685,7 +3687,7 @@ lldb::ValueObjectSP ValueObject::CreateValueObjectFromNullptr(
   if (auto temp = type.GetByteSize(target.get()))
     byte_size = temp.value();
   lldb::DataExtractorSP data_sp = std::make_shared<DataExtractor>(
-      reinterpret_cast<const void *>(zero), byte_size, exe_ctx.GetByteOrder(),
+      reinterpret_cast<const void *>(&zero), byte_size, exe_ctx.GetByteOrder(),
       exe_ctx.GetAddressByteSize());
   return ValueObject::CreateValueObjectFromData(name, *data_sp, exe_ctx, type);
 }

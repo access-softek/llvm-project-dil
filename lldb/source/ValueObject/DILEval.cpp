@@ -1204,6 +1204,12 @@ Interpreter::Visit(const MemberOfNode *node) {
   lldb::ValueObjectSP base = *base_or_err;
 
   if (node->valobj()) {
+    if (node->valobj()->GetCompilerType().IsReferenceType()) {
+      lldb::ValueObjectSP tmp_obj = node->valobj()->Dereference(error);
+      if (error.Fail())
+        return error.ToError();
+      return tmp_obj;
+    }
     return node->valobj()->GetSP();
   }
 

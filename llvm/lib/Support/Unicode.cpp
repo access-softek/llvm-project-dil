@@ -290,7 +290,18 @@ bool isFormatting(int UCS) {
   return Format.contains(UCS);
 }
 
-int charWidth(int UCS) {
+/// Gets the number of positions a character is likely to occupy when output
+/// on a terminal ("character width"). This depends on the implementation of the
+/// terminal, and there's no standard definition of character width.
+/// The implementation defines it in a way that is expected to be compatible
+/// with a generic Unicode-capable terminal.
+/// \return Character width:
+///   * ErrorNonPrintableCharacter (-1) for non-printable characters (as
+///     identified by isPrintable);
+///   * 0 for non-spacing and enclosing combining marks;
+///   * 2 for CJK characters excluding halfwidth forms;
+///   * 1 for all remaining characters.
+static inline int charWidth(int UCS) {
   if (!isPrintable(UCS))
     return ErrorNonPrintableCharacter;
 

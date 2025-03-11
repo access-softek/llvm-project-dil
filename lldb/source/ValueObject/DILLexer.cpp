@@ -139,59 +139,42 @@ inline bool IsOperator(unsigned char c) {
   return (InfoTable[c] & (CHAR_PUNCT | CHAR_PERIOD)) != 0;
 }
 
-static bool IsValidIdentifierContinuationCodePoint(uint32_t c) {
-  if (c < 0x80) {
-    if (c == '$')
-      return true;
-    return !IsOperator(c) && !clang::isWhitespace(c);
-  }
-  return true;
+static bool IsValidIdentifierContinuation(char c) {
+  if (c == '$')
+    return true;
+  return !IsOperator(c) && !clang::isWhitespace(c);
 }
 
-static bool IsValidIdentifierStartCodePoint(uint32_t c) {
-  if (!IsValidIdentifierContinuationCodePoint(c))
-    return false;
-  if (c < 0x80 && IsDigit(c))
-    return false;
-  return true;
-}
-
-static std::tuple<llvm::ConversionResult, llvm::UTF32, uint32_t>
-convertUTF8SequenceAndAdvance(llvm::StringRef::iterator &cur_pos,
-                              llvm::StringRef::iterator end) {
-  llvm::UTF32 CodePoint;
-  uint32_t size = llvm::getNumBytesForUTF8(*cur_pos);
-  llvm::ConversionResult Status = llvm::convertUTF8Sequence(
-      (const llvm::UTF8 **)&cur_pos, (const llvm::UTF8 *)end, &CodePoint,
-      llvm::strictConversion);
-  return {Status, CodePoint, size};
-}
-
-static std::optional<llvm::StringRef>
-IsWord(llvm::StringRef expr, llvm::StringRef &remainder, uint32_t &width) {
+static std::optional<llvm::StringRef> IsWord(llvm::StringRef &remainder) {
   llvm::StringRef::iterator cur_pos = remainder.begin();
   llvm::StringRef::iterator start = cur_pos;
-  auto [Status, CodePoint, size] =
-      convertUTF8SequenceAndAdvance(cur_pos, remainder.end());
-  if (Status == llvm::conversionOK &&
-      IsValidIdentifierStartCodePoint(CodePoint)) {
-    width = llvm::sys::unicode::charWidth(CodePoint);
-    unsigned length = size;
-    while (true) {
-      auto [Status, CodePoint, size] =
-          convertUTF8SequenceAndAdvance(cur_pos, remainder.end());
-      if (Status != llvm::conversionOK ||
-          !IsValidIdentifierContinuationCodePoint(CodePoint))
-        break;
-      width += llvm::sys::unicode::charWidth(CodePoint);
-      length += size;
-    }
 
-    remainder = remainder.drop_front(length);
-    llvm::StringRef utf_token(start, length);
-    return utf_token;
+  if (IsDigit(*cur_pos))
+    return std::nullopt;
+
+  while (cur_pos < remainder.end()) {
+    uint8_t c = *cur_pos;
+    if (c < 0x80) {
+      if (IsValidIdentifierContinuation(c)) {
+        cur_pos++;
+        continue;
+      } else
+        break;
+    }
+    if (llvm::isLegalUTF8Sequence((const llvm::UTF8 *)cur_pos,
+                                  (const llvm::UTF8 *)remainder.end())) {
+      cur_pos += llvm::getNumBytesForUTF8(*cur_pos);
+      continue;
+    }
+    break;
   }
-  return std::nullopt;
+
+  if (cur_pos == start)
+    return std::nullopt;
+
+  auto length = cur_pos - start;
+  remainder = remainder.drop_front(length);
+  return llvm::StringRef(start, length);
 }
 
 static void ConsumeNumberBody(uint32_t &length, char &prev_ch,
@@ -277,8 +260,7 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
     position += number.size();
     return token;
   } else {
-    uint32_t width = 0;
-    std::optional<llvm::StringRef> maybe_word = IsWord(expr, remainder, width);
+    std::optional<llvm::StringRef> maybe_word = IsWord(remainder);
     if (maybe_word) {
       llvm::StringRef word = *maybe_word;
       Token::Kind kind = llvm::StringSwitch<Token::Kind>(word)
@@ -308,7 +290,7 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
                             .Case("wchar_t", Token::kw_wchar_t)
                             .Default(Token::identifier);
       auto token = Token(kind, word.str(), position);
-      position += width;
+      position += llvm::sys::unicode::columnWidthUTF8(word.str());
       return token;
     }
   }

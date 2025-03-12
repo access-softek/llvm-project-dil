@@ -12,38 +12,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/ValueObject/DILLexer.h"
-//#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
 
 namespace lldb_private::dil {
-
-/*
-const llvm::StringMap<Token::Kind> Keywords = {
-    {"bool", Token::kw_bool},
-    {"char", Token::kw_char},
-    {"char16_t", Token::kw_char16_t},
-    {"char32_t", Token::kw_char32_t},
-    {"const", Token::kw_const},
-    {"double", Token::kw_double},
-    {"dynamic_cast", Token::kw_dynamic_cast},
-    {"false", Token::kw_false},
-    {"float", Token::kw_float},
-    {"int", Token::kw_int},
-    {"long", Token::kw_long},
-    {"namespace", Token::kw_namespace},
-    {"nullptr", Token::kw_nullptr},
-    {"reinterpret_cast", Token::kw_reinterpret_cast},
-    {"short", Token::kw_short},
-    {"signed", Token::kw_signed},
-    {"sizeof", Token::kw_sizeof},
-    {"static_cast", Token::kw_static_cast},
-    {"this", Token::kw_this},
-    {"true", Token::kw_true},
-    {"unsigned", Token::kw_unsigned},
-    {"void", Token::kw_void},
-    {"volatile", Token::kw_volatile},
-    {"wchar_t", Token::kw_wchar_t}};
-*/
 
 llvm::StringRef Token::GetTokenName(Kind kind) {
   switch (kind){
@@ -105,8 +76,6 @@ llvm::StringRef Token::GetTokenName(Kind kind) {
       return "sizeof";
     case Token::kw_static_cast:
       return "static_cast";
-    case Token::kw_this:
-      return "this";
     case Token::kw_true:
       return "true";
     case Token::kw_unsigned:
@@ -188,7 +157,7 @@ static std::optional<llvm::StringRef> IsNumber(llvm::StringRef expr,
   llvm::StringRef::iterator start = cur_pos;
   uint32_t length = 0;
   char prev_ch = 0;
-  dil::NumberKind kind = dil::NumberKind::eInteger;
+  // Possibly lexing an integer.
   if (*start == '.') {
     auto next_pos = start + 1;
     if (next_pos == expr.end() || !IsDigit(*next_pos))
@@ -198,7 +167,7 @@ static std::optional<llvm::StringRef> IsNumber(llvm::StringRef expr,
     ConsumeNumberBody(length, prev_ch, cur_pos, expr);
     // We're not at the end of the string, and we should be looking at a '.'
     if (*cur_pos == '.') {
-      kind = dil::NumberKind::eFloat;
+      // Lexing a floating point.
       prev_ch = *cur_pos;
       length++;
       cur_pos++;
@@ -225,15 +194,13 @@ llvm::Expected<DILLexer> DILLexer::Create(llvm::StringRef expr) {
   std::vector<Token> tokens;
   llvm::StringRef remainder = expr;
   do {
-    if (llvm::Expected<Token> t = Lex(expr, remainder)) {
+    if (llvm::Expected<Token> t = Lex(expr, remainder))
       tokens.push_back(std::move(*t));
-    } else {
+    else
       return t.takeError();
-    }
   } while (tokens.back().GetKind() != Token::eof);
   return DILLexer(expr, std::move(tokens));
 }
-
 
 llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
                                     llvm::StringRef &remainder) {
@@ -245,7 +212,7 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
   if (remainder.empty())
     return Token(Token::eof, "", (uint32_t)expr.size());
 
-  uint32_t position = cur_pos - expr.begin();;
+  uint32_t position = cur_pos - expr.begin();
   llvm::StringRef::iterator start = cur_pos;
   std::optional<llvm::StringRef> maybe_number = IsNumber(expr, remainder);
   if (maybe_number) {
@@ -255,32 +222,32 @@ llvm::Expected<Token> DILLexer::Lex(llvm::StringRef expr,
     std::optional<llvm::StringRef> maybe_word = IsWord(expr, remainder);
     if (maybe_word) {
       llvm::StringRef word = *maybe_word;
-      Token::Kind kind = llvm::StringSwitch<Token::Kind>(word)
-                            .Case("bool", Token::kw_bool)
-                            .Case("char", Token::kw_char)
-                            .Case("char16_t", Token::kw_char16_t)
-                            .Case("char32_t", Token::kw_char32_t)
-                            .Case("const", Token::kw_const)
-                            .Case("double", Token::kw_double)
-                            .Case("dynamic_cast", Token::kw_dynamic_cast)
-                            .Case("false", Token::kw_false)
-                            .Case("float", Token::kw_float)
-                            .Case("int", Token::kw_int)
-                            .Case("long", Token::kw_long)
-                            .Case("namespace", Token::kw_namespace)
-                            .Case("nullptr", Token::kw_nullptr)
-                            .Case("reinterpret_cast", Token::kw_reinterpret_cast)
-                            .Case("short", Token::kw_short)
-                            .Case("signed", Token::kw_signed)
-                            .Case("sizeof", Token::kw_sizeof)
-                            .Case("static_cast", Token::kw_static_cast)
-                            .Case("this", Token::kw_this)
-                            .Case("true", Token::kw_true)
-                            .Case("unsigned", Token::kw_unsigned)
-                            .Case("void", Token::kw_void)
-                            .Case("volatile", Token::kw_volatile)
-                            .Case("wchar_t", Token::kw_wchar_t)
-                            .Default(Token::identifier);
+      Token::Kind kind =
+          llvm::StringSwitch<Token::Kind>(word)
+              .Case("bool", Token::kw_bool)
+              .Case("char", Token::kw_char)
+              .Case("char16_t", Token::kw_char16_t)
+              .Case("char32_t", Token::kw_char32_t)
+              .Case("const", Token::kw_const)
+              .Case("double", Token::kw_double)
+              .Case("dynamic_cast", Token::kw_dynamic_cast)
+              .Case("false", Token::kw_false)
+              .Case("float", Token::kw_float)
+              .Case("int", Token::kw_int)
+              .Case("long", Token::kw_long)
+              .Case("namespace", Token::kw_namespace)
+              .Case("nullptr", Token::kw_nullptr)
+              .Case("reinterpret_cast", Token::kw_reinterpret_cast)
+              .Case("short", Token::kw_short)
+              .Case("signed", Token::kw_signed)
+              .Case("sizeof", Token::kw_sizeof)
+              .Case("static_cast", Token::kw_static_cast)
+              .Case("true", Token::kw_true)
+              .Case("unsigned", Token::kw_unsigned)
+              .Case("void", Token::kw_void)
+              .Case("volatile", Token::kw_volatile)
+              .Case("wchar_t", Token::kw_wchar_t)
+              .Default(Token::identifier);
       return Token(kind, word.str(), (uint32_t)position);
     }
   }

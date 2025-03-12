@@ -1165,9 +1165,6 @@ TEST_F(EvalTest, TestAddressOf) {
               IsError("cannot take the address of an rvalue of type 'double'"));
 
   EXPECT_THAT(
-      Eval("&this"),
-      IsError("cannot take the address of an rvalue of type 'TestMethods *'"));
-  EXPECT_THAT(
       Eval("&(&s_str)"),
       IsError("cannot take the address of an rvalue of type 'const char **'"));
 
@@ -3512,7 +3509,7 @@ TEST_F(EvalTest, DISABLED_TestSeparateParsingWithContextVars) {
               IsError("use of undeclared identifier '$y'"));
 }
 
-TEST_F(EvalTest, DISABLED_TestRegisters) {
+TEST_F(EvalTest, TestRegisters) {
   // LLDB loses the value formatter when evaluating registers and prints their
   // value "as is". In lldb-eval the value formatter is preserved and the
   // register can be "pretty-printed" depending on its type (e.g. vector
@@ -3529,7 +3526,7 @@ TEST_F(EvalTest, DISABLED_TestRegisters) {
   EXPECT_THAT(Eval("(uint64_t) $flags"), IsOk());
 }
 
-TEST_F(EvalTest, TestRegistersNoDollar) {
+TEST_F(EvalTest, DISABLED_TestRegistersNoDollar) {
   this->compare_with_lldb_ = false;
 
   // lldb-eval also supports accessing registers without `$`. Any other

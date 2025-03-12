@@ -9,13 +9,32 @@
 #ifndef LLDB_VALUEOBJECT_DILEVAL_H
 #define LLDB_VALUEOBJECT_DILEVAL_H
 
+#include "lldb/ValueObject/DILAST.h"
+#include "lldb/ValueObject/DILParser.h"
 #include <memory>
 #include <vector>
 
-#include "lldb/ValueObject/DILAST.h"
-#include "lldb/ValueObject/DILParser.h"
-
 namespace lldb_private::dil {
+
+/// Given the name of an identifier (variable name, member name, type name,
+/// etc.), find the ValueObject for that name (if it exists) and create and
+/// return an IdentifierInfo object containing all the relevant information
+/// about that object (for DIL parsing and evaluating).
+std::unique_ptr<IdentifierInfo> LookupIdentifier(
+    llvm::StringRef name_ref, std::shared_ptr<StackFrame> stack_frame,
+    lldb::DynamicValueType use_dynamic, CompilerType *scope_ptr = nullptr);
+
+std::unique_ptr<IdentifierInfo> LookupGlobalIdentifier(
+    llvm::StringRef name_ref, std::shared_ptr<StackFrame> stack_frame,
+    lldb::TargetSP target_sp, lldb::DynamicValueType use_dynamic,
+    CompilerType *scope_ptr = nullptr);
+
+/// Get the appropriate ValueObjectSP, consulting the use_dynamic and
+/// use_synthetic options passed.
+lldb::ValueObjectSP GetDynamicOrSyntheticValue(
+    lldb::ValueObjectSP valobj_sp,
+    lldb::DynamicValueType use_dynamic = lldb::eNoDynamicValues,
+    bool use_synthetic = false);
 
 class FlowAnalysis {
  public:
@@ -29,51 +48,51 @@ class FlowAnalysis {
   bool m_address_of_is_pending;
 };
 
-class DILInterpreter : Visitor {
- public:
-  DILInterpreter(lldb::TargetSP target, llvm::StringRef expr);
-  DILInterpreter(lldb::TargetSP target, llvm::StringRef expr,
-                 lldb::ValueObjectSP scope);
-  DILInterpreter(lldb::TargetSP target, llvm::StringRef expr,
-                 lldb::DynamicValueType use_dynamic);
+class Interpreter : Visitor {
+public:
+  Interpreter(lldb::TargetSP target, llvm::StringRef expr,
+              lldb::DynamicValueType use_dynamic,
+              std::shared_ptr<StackFrame> frame_sp);
 
-  lldb::ValueObjectSP DILEval(const DILASTNode* tree, lldb::TargetSP target_sp,
-                              Status& error);
+  llvm::Expected<lldb::ValueObjectSP> DILEval(const ASTNode *tree,
+                                              lldb::TargetSP target_sp);
 
   void SetContextVars(
       std::unordered_map<std::string, lldb::ValueObjectSP> context_vars);
 
  protected:
-  lldb::ValueObjectSP DILEvalNode(const DILASTNode* node,
-                                  FlowAnalysis* flow = nullptr);
+   llvm::Expected<lldb::ValueObjectSP>
+   DILEvalNode(const ASTNode *node, FlowAnalysis *flow = nullptr);
 
-  bool Success() { return m_error.Success(); }
-
-  Status EvalError() { return std::move(m_error); };
-
-  lldb::ValueObjectSP EvaluateMemberOf(lldb::ValueObjectSP value,
-                                      const std::vector<uint32_t>& path,
-                                      bool use_synthetic,
-                                      bool is_dynamic);
+   lldb::ValueObjectSP EvaluateMemberOf(lldb::ValueObjectSP value,
+                                        const std::vector<uint32_t> &path,
+                                        bool use_synthetic, bool is_dynamic);
 
  private:
   void SetError(ErrorCode error_code, std::string error,
                 uint32_t loc);
 
-  void Visit(const ErrorNode* node) override;
-  void Visit(const ScalarLiteralNode* node) override;
-  void Visit(const StringLiteralNode* node) override;
-  void Visit(const IdentifierNode* node) override;
-  void Visit(const SizeOfNode* node) override;
-  void Visit(const BuiltinFunctionCallNode* node) override;
-  void Visit(const CStyleCastNode* node) override;
-  void Visit(const CxxStaticCastNode* node) override;
-  void Visit(const CxxReinterpretCastNode* node) override;
-  void Visit(const MemberOfNode* node) override;
-  void Visit(const ArraySubscriptNode* node) override;
-  void Visit(const BinaryOpNode* node) override;
-  void Visit(const UnaryOpNode* node) override;
-  void Visit(const TernaryOpNode* node) override;
+  llvm::Expected<lldb::ValueObjectSP>
+  Visit(const ScalarLiteralNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP>
+  Visit(const StringLiteralNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP>
+  Visit(const IdentifierNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP> Visit(const SizeOfNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP>
+  Visit(const BuiltinFunctionCallNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP>
+  Visit(const CStyleCastNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP>
+  Visit(const CxxStaticCastNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP>
+  Visit(const CxxReinterpretCastNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP> Visit(const MemberOfNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP>
+  Visit(const ArraySubscriptNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP> Visit(const BinaryOpNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP> Visit(const UnaryOpNode *node) override;
+  llvm::Expected<lldb::ValueObjectSP> Visit(const TernaryOpNode *node) override;
 
   lldb::ValueObjectSP EvaluateComparison(BinaryOpKind kind,
                                          lldb::ValueObjectSP lhs,
@@ -87,43 +106,43 @@ class DILInterpreter : Visitor {
   lldb::ValueObjectSP EvaluateUnaryPrefixIncrement(lldb::ValueObjectSP rhs);
   lldb::ValueObjectSP EvaluateUnaryPrefixDecrement(lldb::ValueObjectSP rhs);
 
-  lldb::ValueObjectSP EvaluateBinaryAddition(lldb::ValueObjectSP lhs,
-                                             lldb::ValueObjectSP rhs);
-  lldb::ValueObjectSP EvaluateBinarySubtraction(lldb::ValueObjectSP lhs,
-                                                lldb::ValueObjectSP rhs,
-                                                CompilerType result_type);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinaryAddition(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinarySubtraction(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs,
+                            CompilerType result_type);
   lldb::ValueObjectSP EvaluateBinaryMultiplication(lldb::ValueObjectSP lhs,
                                                    lldb::ValueObjectSP rhs);
-  lldb::ValueObjectSP EvaluateBinaryDivision(lldb::ValueObjectSP lhs,
-                                             lldb::ValueObjectSP rhs);
-  lldb::ValueObjectSP EvaluateBinaryRemainder(lldb::ValueObjectSP lhs,
-                                              lldb::ValueObjectSP rhs);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinaryDivision(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinaryRemainder(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
   lldb::ValueObjectSP EvaluateBinaryBitwise(BinaryOpKind kind,
                                             lldb::ValueObjectSP lhs,
                                             lldb::ValueObjectSP rhs);
-  lldb::ValueObjectSP EvaluateBinaryShift(BinaryOpKind kind,
-                                          lldb::ValueObjectSP lhs,
-                                          lldb::ValueObjectSP rhs);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinaryShift(BinaryOpKind kind, lldb::ValueObjectSP lhs,
+                      lldb::ValueObjectSP rhs);
 
   lldb::ValueObjectSP EvaluateAssignment(lldb::ValueObjectSP lhs,
                                          lldb::ValueObjectSP rhs);
-  lldb::ValueObjectSP EvaluateBinaryAddAssign(lldb::ValueObjectSP lhs,
-                                              lldb::ValueObjectSP rhs);
-  lldb::ValueObjectSP EvaluateBinarySubAssign(lldb::ValueObjectSP lhs,
-                                              lldb::ValueObjectSP rhs);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinaryAddAssign(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinarySubAssign(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
   lldb::ValueObjectSP EvaluateBinaryMulAssign(lldb::ValueObjectSP lhs,
                                               lldb::ValueObjectSP rhs);
-  lldb::ValueObjectSP EvaluateBinaryDivAssign(lldb::ValueObjectSP lhs,
-                                              lldb::ValueObjectSP rhs);
-  lldb::ValueObjectSP EvaluateBinaryRemAssign(lldb::ValueObjectSP lhs,
-                                              lldb::ValueObjectSP rhs);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinaryDivAssign(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinaryRemAssign(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
   lldb::ValueObjectSP EvaluateBinaryBitwiseAssign(BinaryOpKind kind,
                                                   lldb::ValueObjectSP lhs,
                                                   lldb::ValueObjectSP rhs);
-  lldb::ValueObjectSP EvaluateBinaryShiftAssign(BinaryOpKind kind,
-                                                lldb::ValueObjectSP lhs,
-                                                lldb::ValueObjectSP rhs,
-                                                CompilerType comp_assign_type);
+  llvm::Expected<lldb::ValueObjectSP>
+  EvaluateBinaryShiftAssign(BinaryOpKind kind, lldb::ValueObjectSP lhs,
+                            lldb::ValueObjectSP rhs,
+                            CompilerType comp_assign_type);
 
   lldb::ValueObjectSP PointerAdd(lldb::ValueObjectSP lhs, int64_t offset);
   lldb::ValueObjectSP ResolveContextVar(const std::string& name) const;
@@ -148,13 +167,11 @@ class DILInterpreter : Visitor {
 
   std::unordered_map<std::string, lldb::ValueObjectSP> m_context_vars;
 
-  lldb::ValueObjectSP m_result;
-
   lldb::ValueObjectSP m_scope;
 
   lldb::DynamicValueType m_default_dynamic;
 
-  Status m_error;
+  std::shared_ptr<StackFrame> m_exe_ctx_scope;
 };
 
 }  // namespace lldb_private::dil

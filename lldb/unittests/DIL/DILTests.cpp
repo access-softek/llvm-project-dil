@@ -1164,9 +1164,6 @@ TEST_F(EvalTest, TestAddressOf) {
   EXPECT_THAT(Eval("&0.1"),
               IsError("cannot take the address of an rvalue of type 'double'"));
 
-  //EXPECT_THAT(
-  //    Eval("&this"),
-  //      IsError("cannot take the address of an rvalue of type 'TestMethods *'"));
   EXPECT_THAT(
       Eval("&(&s_str)"),
       IsError("cannot take the address of an rvalue of type 'const char **'"));

@@ -486,7 +486,8 @@ UsualArithmeticConversions(std::shared_ptr<ExecutionContextScope> ctx,
   }
 
   if (!is_comp_assign) {
-    assert(lhs->GetDereferencedResultType().CompareTypes(rhs->GetDereferencedResultType()) &&
+    assert(lhs->GetDereferencedResultType().GetCanonicalType().CompareTypes(
+               rhs->GetDereferencedResultType().GetCanonicalType()) &&
            "integral promotion error: operands result types must be the same");
   }
 
@@ -3409,6 +3410,12 @@ ASTNodeUP DILParser::BuildTernaryOp(ASTNodeUP cond, ASTNodeUP lhs,
     return std::make_unique<TernaryOpNode>(location, lhs_type, std::move(cond),
                                            std::move(lhs), std::move(rhs));
   }
+  // If operands have the same canonical type, use the canonical type.
+  if (lhs_type.GetCanonicalType().CompareTypes(rhs_type.GetCanonicalType())) {
+    return std::make_unique<TernaryOpNode>(
+        location, lhs_type.GetCanonicalType(), std::move(cond), std::move(lhs),
+        std::move(rhs));
+  }
 
   // If both operands have arithmetic type, apply the usual arithmetic
   // conversions to bring them to a common type.
@@ -3433,6 +3440,12 @@ ASTNodeUP DILParser::BuildTernaryOp(ASTNodeUP cond, ASTNodeUP lhs,
   if (lhs_type.CompareTypes(rhs_type)) {
     return std::make_unique<TernaryOpNode>(location, lhs_type, std::move(cond),
                                            std::move(lhs), std::move(rhs));
+  }
+  // Check if operands have the same canonical pointer type.
+  if (lhs_type.GetCanonicalType().CompareTypes(rhs_type.GetCanonicalType())) {
+    return std::make_unique<TernaryOpNode>(
+        location, lhs_type.GetCanonicalType(), std::move(cond), std::move(lhs),
+        std::move(rhs));
   }
 
   // If one operand is a pointer and the other is a nullptr or literal zero,

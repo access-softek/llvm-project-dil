@@ -1812,7 +1812,7 @@ Interpreter::EvaluateBinaryAddition(lldb::ValueObjectSP lhs,
     assert(lhs->GetCompilerType().CompareTypes(rhs->GetCompilerType()) &&
            "invalid ast: operand must have the same type");
     return EvaluateArithmeticOp(m_target, BinaryOpKind::Add, lhs, rhs,
-                                lhs->GetCompilerType().GetCanonicalType());
+                                lhs->GetCompilerType());
   }
 
   // Here one of the operands must be a pointer and the other one an integer.
@@ -1847,7 +1847,7 @@ Interpreter::EvaluateBinarySubtraction(lldb::ValueObjectSP lhs,
     assert(lhs->GetCompilerType().CompareTypes(rhs->GetCompilerType()) &&
            "invalid ast: operand must have the same type");
     return EvaluateArithmeticOp(m_target, BinaryOpKind::Sub, lhs, rhs,
-                                lhs->GetCompilerType().GetCanonicalType());
+                                lhs->GetCompilerType());
   }
   assert(lhs->GetCompilerType().IsPointerType()
          && "invalid ast: lhs must be a pointer");
@@ -1907,7 +1907,7 @@ Interpreter::EvaluateBinaryMultiplication(lldb::ValueObjectSP lhs,
          "invalid ast: operands must be arithmetic and have the same type");
 
   return EvaluateArithmeticOp(m_target, BinaryOpKind::Mul, lhs, rhs,
-                              lhs->GetCompilerType().GetCanonicalType());
+                              lhs->GetCompilerType());
 }
 
 llvm::Expected<lldb::ValueObjectSP>
@@ -1934,7 +1934,7 @@ Interpreter::EvaluateBinaryDivision(lldb::ValueObjectSP lhs,
   }
 
   return EvaluateArithmeticOp(m_target, BinaryOpKind::Div, lhs, rhs,
-                              lhs->GetCompilerType().GetCanonicalType());
+                              lhs->GetCompilerType());
 }
 
 llvm::Expected<lldb::ValueObjectSP>
@@ -1973,7 +1973,7 @@ Interpreter::EvaluateBinaryBitwise(BinaryOpKind kind, lldb::ValueObjectSP lhs,
          "invalid ast: operation must be '&', '|' or '^'");
 
   return EvaluateArithmeticOpInteger(m_target, kind, lhs, rhs,
-                                     lhs->GetCompilerType().GetCanonicalType());
+                                     lhs->GetCompilerType());
 }
 
 llvm::Expected<lldb::ValueObjectSP>

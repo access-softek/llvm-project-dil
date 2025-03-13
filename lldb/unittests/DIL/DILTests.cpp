@@ -669,7 +669,7 @@ TEST_F(EvalTest, TestBitwiseOperators) {
   EXPECT_THAT(Eval("(signed char)-123 >> 8"), IsEqual("-1"));
 
   EXPECT_THAT(Eval("0b1011 & 0xFF"), IsEqual("11"));
-  EXPECT_THAT(Eval("0b1011 & mask_ff"), XFail(IsEqual("11")));
+  EXPECT_THAT(Eval("0b1011 & mask_ff"), IsEqual("11"));
   EXPECT_THAT(Eval("0b1011 & 0b0111"), IsEqual("3"));
   EXPECT_THAT(Eval("0b1011 | 0b0111"), IsEqual("15"));
   EXPECT_THAT(Eval("-0b1011 | 0xFF"), IsEqual("-1"));
@@ -2237,7 +2237,7 @@ TEST_F(EvalTest, TestBitFieldPromotion) {
   EXPECT_THAT(Eval("bf.f - 2"), IsEqual("4294967295"));
   EXPECT_THAT(Eval("bf.g - 2"), IsEqual("-1"));
   EXPECT_THAT(Eval("bf.h - 2"), IsEqual("-1"));
-  EXPECT_THAT(Eval("bf.i - 2"), XFail(IsEqual("18446744073709551615")));
+  EXPECT_THAT(Eval("bf.i - 2"), IsEqual("18446744073709551615"));
   EXPECT_THAT(Eval("bf.g - bf.b"), IsEqual("-8"));
 
   EXPECT_THAT(Eval("-(true ? bf.b : bf.a)"), IsEqual("-9"));
@@ -2247,7 +2247,7 @@ TEST_F(EvalTest, TestBitFieldPromotion) {
   EXPECT_THAT(Eval("-(true ? bf.b : bf.h)"), IsEqual("-9"));
 
   if (HAS_METHOD(lldb::SBType, GetEnumerationIntegerType())) {
-    EXPECT_THAT(Eval("bf.j - 2"), XFail(IsEqual("4294967295")));
+    EXPECT_THAT(Eval("bf.j - 2"), IsEqual("4294967295"));
     EXPECT_THAT(Eval("-(true ? bf.b : bf.j)"), IsEqual("4294967287"));
     EXPECT_THAT(Eval("-(true ? bf.e : bf.j)"), IsEqual("4294967295"));
   }

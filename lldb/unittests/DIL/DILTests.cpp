@@ -1100,8 +1100,8 @@ TEST_F(EvalTest, TestGlobalVariableLookup) {
   EXPECT_THAT(Eval("::globalRef"), IsEqual("-559038737"));
 
   EXPECT_THAT(Eval("externGlobalVar"),
-              XFail(IsEqual("12648430"))); // 0x00C0FFEE
-  EXPECT_THAT(Eval("::externGlobalVar"), XFail(IsEqual("12648430")));
+              IsEqual("12648430")); // 0x00C0FFEE
+  EXPECT_THAT(Eval("::externGlobalVar"), IsEqual("12648430"));
 
   EXPECT_THAT(Eval("ns::globalVar"), IsEqual("13"));
   EXPECT_THAT(Eval("ns::globalPtr"), IsOk());
@@ -1155,7 +1155,7 @@ TEST_F(EvalTest, TestAddressOf) {
   EXPECT_THAT(Eval("&p != &my_pr"), IsEqual("false"));
 
   EXPECT_THAT(Eval("&globalVar"), IsOk());
-  EXPECT_THAT(Eval("&externGlobalVar"), XFail(IsOk()));
+  EXPECT_THAT(Eval("&externGlobalVar"), IsOk());
   EXPECT_THAT(Eval("&s_str"), IsOk());
   EXPECT_THAT(Eval("&param"), IsOk());
 

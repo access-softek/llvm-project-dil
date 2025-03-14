@@ -20,12 +20,13 @@ if ("libcxx" IN_LIST LLVM_ENABLE_RUNTIMES)
   add_custom_command(
     OUTPUT test_binary.bin
     COMMAND $<TARGET_FILE:clang> ${CMAKE_CURRENT_SOURCE_DIR}/test_binary.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_library.cc
             -O0 -g -std=c++17 -fuse-ld=lld -B$<TARGET_FILE:lld>
             -nostdlib++ -nostdinc++ -cxx-isystem ${LIBCXX_GENERATED_INCLUDE_DIR}
             ${INCLUDE_TARGET_DIR_OPTION}
             -L${LIBCXX_LIBRARY_DIR} -Wl,-rpath,${LIBCXX_LIBRARY_DIR} -lc++
             -o ${EXE_PATH}/Inputs/test_binary.bin
-    DEPENDS test_binary.cc clang lld
+    DEPENDS test_binary.cc test_library.cc clang lld
   )
   add_custom_target(test_binary
     DEPENDS test_binary.bin

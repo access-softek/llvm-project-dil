@@ -112,6 +112,7 @@ static lldb::ValueObjectSP EvaluateArithmeticOpInteger(lldb::TargetSP target,
   if (l_value && r_value) {
     llvm::APSInt l = *l_value;
     llvm::APSInt r = *r_value;
+
     switch (kind) {
       case BinaryOpKind::Add:
         return wrap(l + r);
@@ -417,7 +418,7 @@ static lldb::VariableSP DILFindVariable(ConstString name,
   return nullptr;
 }
 
-std::unique_ptr<IdentifierInfo> LookupGlobalIdentifier(
+lldb::ValueObjectSP LookupGlobalIdentifier(
     llvm::StringRef name_ref, std::shared_ptr<StackFrame> stack_frame,
     lldb::TargetSP target_sp, lldb::DynamicValueType use_dynamic,
     CompilerType *scope_ptr) {
@@ -434,7 +435,7 @@ std::unique_ptr<IdentifierInfo> LookupGlobalIdentifier(
           stack_frame->GetValueObjectForFrameVariable(var_sp, use_dynamic);
   }
   if (value_sp)
-    return IdentifierInfo::FromValue(*value_sp);
+    return value_sp;
 
   // Also check for static global vars.
   if (variable_list) {
@@ -452,7 +453,7 @@ std::unique_ptr<IdentifierInfo> LookupGlobalIdentifier(
   }
 
   if (value_sp)
-    return IdentifierInfo::FromValue(*value_sp);
+    return value_sp;
 
   // Check for match in modules global variables.
   VariableList modules_var_list;
@@ -472,15 +473,15 @@ std::unique_ptr<IdentifierInfo> LookupGlobalIdentifier(
   }
 
   if (value_sp)
-    return IdentifierInfo::FromValue(*value_sp);
+    return value_sp;
 
   return nullptr;
 }
 
-std::unique_ptr<IdentifierInfo>
-LookupIdentifier(llvm::StringRef name_ref,
-                 std::shared_ptr<StackFrame> stack_frame,
-                 lldb::DynamicValueType use_dynamic, CompilerType *scope_ptr) {
+lldb::ValueObjectSP LookupIdentifier(llvm::StringRef name_ref,
+                                     std::shared_ptr<StackFrame> stack_frame,
+                                     lldb::DynamicValueType use_dynamic,
+                                     CompilerType *scope_ptr) {
   lldb::ValueObjectSP value_sp;
   // Support $rax as a special syntax for accessing registers.
   // Will return an invalid value in case the requested register doesn't exist.
@@ -494,7 +495,7 @@ LookupIdentifier(llvm::StringRef name_ref,
           ValueObjectRegister::Create(stack_frame.get(), reg_ctx, reg_info);
 
     if (value_sp)
-      return IdentifierInfo::FromValue(*value_sp);
+      return value_sp;
 
     return nullptr;
   }
@@ -517,7 +518,7 @@ LookupIdentifier(llvm::StringRef name_ref,
         value_sp = stack_frame->FindVariable(ConstString(name_ref));
 
       if (value_sp)
-        return IdentifierInfo::FromValue(*value_sp);
+        return value_sp;
 
       // Try looking for an instance variable (class member).
       SymbolContext sc = stack_frame->GetSymbolContext(
@@ -528,7 +529,7 @@ LookupIdentifier(llvm::StringRef name_ref,
         value_sp = value_sp->GetChildMemberWithName(name_ref);
 
       if (value_sp)
-        return IdentifierInfo::FromValue(*value_sp);
+        return value_sp;
     }
   }
 
@@ -561,7 +562,7 @@ LookupIdentifier(llvm::StringRef name_ref,
   }
 
   if (value_sp)
-    return IdentifierInfo::FromValue(*value_sp);
+    return value_sp;
 
   return nullptr;
 }
@@ -608,10 +609,7 @@ Interpreter::EvaluateMemberOf(lldb::ValueObjectSP value,
   // an "ephemeral" parent lldb::ValueObjectSP, representing the dereferenced
   // value.
   lldb::ValueObjectSP member_val_sp = value;
-  // Objects from the standard library (e.g. containers, smart pointers) have
-  // synthetic children (e.g. stored values for containers, wrapped object for
-  // smart pointers), but the indexes in `member_index()` array refer to the
-  // actual type members.
+
   lldb::DynamicValueType use_dynamic =
       (!is_dynamic) ? lldb::eNoDynamicValues : lldb::eDynamicDontRunTarget;
   for (uint32_t idx : path) {
@@ -687,7 +685,7 @@ llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const IdentifierNode *node) {
   lldb::DynamicValueType use_dynamic = node->GetUseDynamic();
 
-  std::unique_ptr<IdentifierInfo> identifier =
+  lldb::ValueObjectSP identifier =
       LookupIdentifier(node->GetName(), m_exe_ctx_scope, use_dynamic);
 
   if (!identifier)
@@ -703,60 +701,14 @@ Interpreter::Visit(const IdentifierNode *node) {
     return error.ToError();
   }
 
-  lldb::ValueObjectSP val;
-  lldb::TargetSP target_sp;
-  switch (identifier->GetKind()) {
-    using Kind = IdentifierInfo::Kind;
-    case Kind::eValue:
-      val = identifier->GetValue();
-      break;
-
-    case Kind::eContextArg:
-      assert(node->is_context_var() && "invalid ast: context var expected");
-      val = ResolveContextVar(node->GetName());
-      if (!val) {
-        Status error = Status(
-            (uint32_t)ErrorCode::kUndeclaredIdentifier, lldb::eErrorTypeGeneric,
-            FormatDiagnostics(
-                m_expr,
-                llvm::formatv("use of undeclared identifier '{0}'",
-                              node->GetName()),
-                node->GetLocation()));
-        return error.ToError();
-      }
-      if (!node->GetDereferencedResultType().CompareTypes(
-              val->GetCompilerType())) {
-        Status error = Status(
-            (uint32_t)ErrorCode::kInvalidOperandType, lldb::eErrorTypeGeneric,
-            FormatDiagnostics(
-                m_expr,
-                llvm::formatv(
-                    "unexpected type of context variable"
-                    " '{0}' (expected {1}, got {2})",
-                    node->GetName(),
-                    node->GetDereferencedResultType().TypeDescription(),
-                    val->GetCompilerType().TypeDescription()),
-                node->GetLocation()));
-        return error.ToError();
-      }
-      break;
-
-    case Kind::eMemberPath:
-      val = EvaluateMemberOf(m_scope, identifier->GetPath(), false, false);
-      break;
-
-    default:
-      assert(false && "invalid ast: invalid identifier kind");
-    }
-
-  if (val->GetCompilerType().IsReferenceType()) {
+  if (identifier->GetCompilerType().IsReferenceType()) {
     Status error;
-    val = val->Dereference(error);
+    identifier = identifier->Dereference(error);
     if (error.Fail())
       return error.ToError();
   }
 
-  return val;
+  return identifier;
 }
 
 llvm::Expected<lldb::ValueObjectSP> Interpreter::Visit(const SizeOfNode *node) {
@@ -1021,6 +973,7 @@ llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const CxxStaticCastNode *node) {
   // Get the type and the value we need to cast.
   auto type = node->type();
+  auto orig_type = node->orig_type();
   auto rhs_or_err = DILEvalNode(node->operand());
   if (!rhs_or_err) {
     return rhs_or_err;
@@ -1034,10 +987,21 @@ Interpreter::Visit(const CxxStaticCastNode *node) {
       return error.ToError();
   }
 
+  CompilerType rhs_type = rhs->GetCompilerType();
   switch (node->cast_kind()) {
     case CxxStaticCastKind::eNoOp: {
-      assert(type.CompareTypes(rhs->GetCompilerType()) &&
-             "invalid ast: types should be the same");
+      if (!orig_type.CompareTypes(rhs_type) && !type.CompareTypes(rhs_type)) {
+        Status error = Status(
+            (uint32_t)ErrorCode::kNotImplemented, lldb::eErrorTypeGeneric,
+            FormatDiagnostics(
+                m_expr,
+                llvm::formatv("static_cast from {0} to"
+                              " {1} is not implemented yet",
+                              rhs->GetCompilerType().TypeDescription(),
+                              orig_type.TypeDescription()),
+                node->GetLocation()));
+        return error.ToError();
+      }
       lldb::ValueObjectSP rhs_sp(GetDynamicOrSyntheticValue(rhs));
       return lldb::ValueObjectSP(rhs_sp->Cast(type));
     }
@@ -1186,6 +1150,117 @@ Interpreter::Visit(const CxxReinterpretCastNode *node) {
   return error.ToError();
 }
 
+static bool GetFieldIndex(CompilerType type, const std::string &name,
+                          std::vector<uint32_t> *idx_path) {
+  bool found = false;
+  uint32_t num_fields = type.GetNumFields();
+  for (uint32_t i = 0; i < num_fields; ++i) {
+    uint64_t bit_offset = 0;
+    uint32_t bitfield_bit_size = 0;
+    bool is_bitfield = false;
+    std::string name_sstr;
+    CompilerType field_type(type.GetFieldAtIndex(
+        i, name_sstr, &bit_offset, &bitfield_bit_size, &is_bitfield));
+    auto field_name =
+        name_sstr.length() == 0 ? std::optional<std::string>() : name_sstr;
+    if (field_type.IsValid() && name_sstr == name) {
+      idx_path->push_back(i + type.GetNumberOfNonEmptyBaseClasses());
+      found = true;
+      break;
+    } else if (field_type.IsAnonymousType()) {
+      found = GetFieldIndex(field_type, name, idx_path);
+      if (found) {
+        idx_path->push_back(i + type.GetNumberOfNonEmptyBaseClasses());
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+static bool SearchBaseClassesForField(lldb::ValueObjectSP base_sp,
+                                      CompilerType base_type,
+                                      const std::string &name,
+                                      std::vector<uint32_t> *idx_path,
+                                      bool use_synthetic, bool is_dynamic) {
+  bool found = false;
+  uint32_t num_non_empty_bases = 0;
+  uint32_t num_direct_bases = base_type.GetNumDirectBaseClasses();
+  for (uint32_t i = 0; i < num_direct_bases; ++i) {
+    uint32_t bit_offset;
+    CompilerType base_class =
+        base_type.GetDirectBaseClassAtIndex(i, &bit_offset);
+    std::vector<uint32_t> field_idx_path;
+    if (GetFieldIndex(base_class, name, &field_idx_path)) {
+      for (uint32_t j : field_idx_path)
+        idx_path->push_back(j + base_class.GetNumberOfNonEmptyBaseClasses());
+      idx_path->push_back(i);
+      return true;
+    }
+
+    found = SearchBaseClassesForField(base_sp, base_class, name, idx_path,
+                                      use_synthetic, is_dynamic);
+    if (found) {
+      idx_path->push_back(i);
+      return true;
+    }
+
+    if (base_class.GetNumFields() > 0)
+      num_non_empty_bases += 1;
+  }
+  return false;
+}
+
+lldb::ValueObjectSP Interpreter::FindMemberWithName(lldb::ValueObjectSP base,
+                                                    ConstString name,
+                                                    bool is_arrow) {
+  bool is_synthetic = false;
+  bool is_dynamic = true;
+  // See if GetChildMemberWithName works.
+  lldb::ValueObjectSP field_obj =
+      base->GetChildMemberWithName(name.GetStringRef());
+  if (field_obj && field_obj->GetName() == name)
+    return field_obj;
+
+  // Check for synthetic member.
+  lldb::ValueObjectSP child_sp = base->GetSyntheticValue();
+  if (child_sp) {
+    is_synthetic = true;
+    field_obj = child_sp->GetChildMemberWithName(name);
+    if (field_obj && field_obj->GetName() == name)
+      return field_obj;
+  }
+
+  // Check indices of immediate member fields of base's type.
+  CompilerType base_type = base->GetCompilerType();
+  std::vector<uint32_t> field_idx_path;
+  if (GetFieldIndex(base_type, name.GetString(), &field_idx_path)) {
+    std::reverse(field_idx_path.begin(), field_idx_path.end());
+    // Traverse the path & verify the final object is correct.
+    field_obj = base;
+    for (uint32_t i : field_idx_path)
+      field_obj = field_obj->GetChildAtIndex(i, true);
+    if (field_obj && field_obj->GetName() == name)
+      return field_obj;
+  }
+
+  // Go through base classes and look for field there.
+  std::vector<uint32_t> base_class_idx_path;
+  bool found =
+      SearchBaseClassesForField(base, base_type, name.GetString(),
+                                &base_class_idx_path, is_synthetic, is_dynamic);
+  if (found && !base_class_idx_path.empty()) {
+    std::reverse(base_class_idx_path.begin(), base_class_idx_path.end());
+    field_obj =
+        EvaluateMemberOf(base, base_class_idx_path, is_synthetic, is_dynamic);
+    if (field_obj && field_obj->GetName() == name)
+      return field_obj;
+  }
+
+  // Field not found.
+  return lldb::ValueObjectSP();
+}
+
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const MemberOfNode *node) {
   // TODO: Implement address-of elision for member-of:
@@ -1203,23 +1278,64 @@ Interpreter::Visit(const MemberOfNode *node) {
   }
   lldb::ValueObjectSP base = *base_or_err;
 
-  if (node->valobj()) {
-    if (node->valobj()->GetCompilerType().IsReferenceType()) {
-      lldb::ValueObjectSP tmp_obj = node->valobj()->Dereference(error);
+  // Perform basic type checking.
+  CompilerType base_type = base->GetCompilerType();
+  if (node->is_arrow() && !base_type.IsPointerType() &&
+      !base_type.IsArrayType()) {
+    lldb::ValueObjectSP deref_sp = base->Dereference(error);
+    if (error.Success()) {
+      base = deref_sp;
+      base_type = deref_sp->GetCompilerType().GetPointerType();
+    } else {
+      Status error = Status(
+          (uint32_t)ErrorCode::kInvalidOperandType, lldb::eErrorTypeGeneric,
+          FormatDiagnostics(
+              m_expr,
+              llvm::formatv("member reference type {0} is not a pointer; "
+                            "did you mean to use '.'?",
+                            base_type.TypeDescription()),
+              node->GetLocation()));
+      return error.ToError();
+    }
+  } else if (!node->is_arrow() && base_type.IsPointerType()) {
+    Status error = Status(
+        (uint32_t)ErrorCode::kInvalidOperandType, lldb::eErrorTypeGeneric,
+        FormatDiagnostics(
+            m_expr,
+            llvm::formatv("member reference type {0} is a pointer; "
+                          "did you mean to use '->'?",
+                          base_type.TypeDescription()),
+            node->GetLocation()));
+    return error.ToError();
+  }
+
+  // User specified array->elem; need to get to element[0] to look for fields.
+  if (node->is_arrow() && base_type.IsArrayType())
+    base = base->GetChildAtIndex(0);
+
+  lldb::ValueObjectSP field_obj =
+      FindMemberWithName(base, node->field_name(), node->is_arrow());
+  if (field_obj) {
+    if (field_obj->GetCompilerType().IsReferenceType()) {
+      lldb::ValueObjectSP tmp_obj = field_obj->Dereference(error);
       if (error.Fail())
         return error.ToError();
       return tmp_obj;
     }
-    return node->valobj()->GetSP();
+    return field_obj;
   }
 
-  if (base->GetCompilerType().IsReferenceType()) {
-    base = base->Dereference(error);
-    if (error.Fail())
-      return error.ToError();
-  }
-  return EvaluateMemberOf(base, node->member_index(), node->is_synthetic(),
-                          node->is_dynamic());
+  if (node->is_arrow() && base_type.IsPointerType())
+    base_type = base_type.GetPointeeType();
+  error = Status(
+      uint32_t(ErrorCode::kInvalidOperandType), lldb::eErrorTypeGeneric,
+      FormatDiagnostics(
+          m_expr,
+          llvm::formatv("no member named '{0}' in {1}",
+                        node->field_name().GetStringRef(),
+                        base_type.GetFullyUnqualifiedType().TypeDescription()),
+          node->GetLocation()));
+  return error.ToError();
 }
 
 llvm::Expected<lldb::ValueObjectSP>
@@ -1316,6 +1432,250 @@ Interpreter::Visit(const ArraySubscriptNode *node) {
   return val2;
 }
 
+static CompilerType GetBasicType(std::shared_ptr<ExecutionContextScope> ctx,
+                                 lldb::BasicType basic_type) {
+  static std::unordered_map<lldb::BasicType, CompilerType> basic_types;
+  auto type = basic_types.find(basic_type);
+  if (type != basic_types.end()) {
+    std::string type_name((type->second).GetTypeName().AsCString());
+    // Only return the found type if it's valid.
+    if (type_name != "<invalid>")
+      return type->second;
+  }
+
+  lldb::TargetSP target_sp = ctx->CalculateTarget();
+  if (target_sp) {
+    for (auto type_system_sp : target_sp->GetScratchTypeSystems())
+      if (auto compiler_type =
+              type_system_sp->GetBasicTypeFromAST(basic_type)) {
+        basic_types.insert({basic_type, compiler_type});
+        return compiler_type;
+      }
+  }
+  CompilerType empty_type;
+  return empty_type;
+}
+
+static CompilerType
+DoIntegralPromotion(CompilerType from,
+                    std::shared_ptr<ExecutionContextScope> ctx) {
+  if (!from.IsInteger() && !from.IsUnscopedEnumerationType())
+    return from;
+
+  if (!from.IsPromotableIntegerType())
+    return from;
+
+  if (from.IsUnscopedEnumerationType())
+    return DoIntegralPromotion(from.GetEnumerationIntegerType(), ctx);
+  lldb::BasicType builtin_type =
+      from.GetCanonicalType().GetBasicTypeEnumeration();
+
+  uint64_t from_size = 0;
+  if (builtin_type == lldb::eBasicTypeWChar ||
+      builtin_type == lldb::eBasicTypeSignedWChar ||
+      builtin_type == lldb::eBasicTypeUnsignedWChar ||
+      builtin_type == lldb::eBasicTypeChar16 ||
+      builtin_type == lldb::eBasicTypeChar32) {
+    // Find the type that can hold the entire range of values for our type.
+    bool is_signed = from.IsSigned();
+    if (auto temp = from.GetByteSize(ctx.get()))
+      from_size = temp.value();
+
+    CompilerType promote_types[] = {
+        GetBasicType(ctx, lldb::eBasicTypeInt),
+        GetBasicType(ctx, lldb::eBasicTypeUnsignedInt),
+        GetBasicType(ctx, lldb::eBasicTypeLong),
+        GetBasicType(ctx, lldb::eBasicTypeUnsignedLong),
+        GetBasicType(ctx, lldb::eBasicTypeLongLong),
+        GetBasicType(ctx, lldb::eBasicTypeUnsignedLongLong),
+    };
+    for (auto &type : promote_types) {
+      uint64_t byte_size = 0;
+      if (auto temp = type.GetByteSize(ctx.get()))
+        byte_size = temp.value();
+      if (from_size < byte_size ||
+          (from_size == byte_size &&
+           is_signed == (bool)(type.GetTypeInfo() & lldb::eTypeIsSigned))) {
+        return type;
+      }
+    }
+
+    llvm_unreachable("char type should fit into long long");
+  }
+  return from;
+}
+
+static lldb::ValueObjectSP
+UnaryConversion(lldb::ValueObjectSP valobj,
+                std::shared_ptr<ExecutionContextScope> ctx) {
+  CompilerType in_type = valobj->GetCompilerType();
+  CompilerType result_type;
+  if (valobj->IsBitfield()) {
+    uint32_t bitfield_size = valobj->GetBitfieldBitSize();
+    if (bitfield_size > 0 && in_type.IsInteger()) {
+      auto int_type = GetBasicType(ctx, lldb::eBasicTypeInt);
+      auto uint_type = GetBasicType(ctx, lldb::eBasicTypeUnsignedInt);
+      uint64_t int_byte_size = 0;
+      uint64_t uint_byte_size = 0;
+      if (auto temp = int_type.GetByteSize(ctx.get()))
+        int_byte_size = temp.value();
+      if (auto temp = uint_type.GetByteSize(ctx.get()))
+        uint_byte_size = temp.value();
+      uint32_t int_bit_size = int_byte_size * CHAR_BIT;
+      if (bitfield_size < int_bit_size ||
+          (in_type.IsSigned() && bitfield_size == int_bit_size))
+        valobj = valobj->CastToBasicType(int_type);
+      else if (bitfield_size <= uint_byte_size * CHAR_BIT)
+        valobj = valobj->CastToBasicType(uint_type);
+    }
+  }
+
+  if (valobj->GetCompilerType().IsInteger() ||
+      valobj->GetCompilerType().IsUnscopedEnumerationType()) {
+    CompilerType promoted_type =
+        DoIntegralPromotion(valobj->GetCompilerType(), ctx);
+    if (!promoted_type.CompareTypes(valobj->GetCompilerType()))
+      return valobj->CastToBasicType(promoted_type);
+  }
+
+  return valobj;
+}
+
+static size_t ConversionRank(CompilerType type) {
+  // Get integer conversion rank
+  // https://eel.is/c++draft/conv.rank
+  switch (type.GetCanonicalType().GetBasicTypeEnumeration()) {
+  case lldb::eBasicTypeBool:
+    return 1;
+  case lldb::eBasicTypeChar:
+  case lldb::eBasicTypeSignedChar:
+  case lldb::eBasicTypeUnsignedChar:
+    return 2;
+  case lldb::eBasicTypeShort:
+  case lldb::eBasicTypeUnsignedShort:
+    return 3;
+  case lldb::eBasicTypeInt:
+  case lldb::eBasicTypeUnsignedInt:
+    return 4;
+  case lldb::eBasicTypeLong:
+  case lldb::eBasicTypeUnsignedLong:
+    return 5;
+  case lldb::eBasicTypeLongLong:
+  case lldb::eBasicTypeUnsignedLongLong:
+    return 6;
+
+    // TODO: The ranks of char16_t, char32_t, and wchar_t are equal to the
+    // ranks of their underlying types.
+  case lldb::eBasicTypeWChar:
+  case lldb::eBasicTypeSignedWChar:
+  case lldb::eBasicTypeUnsignedWChar:
+    return 3;
+  case lldb::eBasicTypeChar16:
+    return 3;
+  case lldb::eBasicTypeChar32:
+    return 4;
+
+  default:
+    break;
+  }
+  return 0;
+}
+
+static lldb::BasicType BasicTypeToUnsigned(lldb::BasicType basic_type) {
+  switch (basic_type) {
+  case lldb::eBasicTypeInt:
+    return lldb::eBasicTypeUnsignedInt;
+  case lldb::eBasicTypeLong:
+    return lldb::eBasicTypeUnsignedLong;
+  case lldb::eBasicTypeLongLong:
+    return lldb::eBasicTypeUnsignedLongLong;
+  default:
+    return basic_type;
+  }
+}
+
+static void
+PerformIntegerConversions(std::shared_ptr<ExecutionContextScope> ctx,
+                          lldb::ValueObjectSP &lhs, lldb::ValueObjectSP &rhs,
+                          bool convert_lhs, bool convert_rhs) {
+  CompilerType l_type = lhs->GetCompilerType();
+  CompilerType r_type = rhs->GetCompilerType();
+  if (r_type.IsSigned() && !l_type.IsSigned()) {
+    uint64_t l_size = 0;
+    uint64_t r_size = 0;
+    if (auto temp = l_type.GetByteSize(ctx.get()))
+      l_size = temp.value();
+    ;
+    if (auto temp = r_type.GetByteSize(ctx.get()))
+      r_size = temp.value();
+    if (l_size <= r_size) {
+      if (r_size == l_size) {
+        auto r_type_unsigned = GetBasicType(
+            ctx, BasicTypeToUnsigned(
+                     r_type.GetCanonicalType().GetBasicTypeEnumeration()));
+        if (convert_rhs)
+          rhs = rhs->CastToBasicType(r_type_unsigned);
+      }
+    }
+  }
+  if (convert_lhs)
+    lhs = lhs->CastToBasicType(rhs->GetCompilerType());
+}
+
+static void ArithmeticConversions(lldb::ValueObjectSP &lhs,
+                                  lldb::ValueObjectSP &rhs,
+                                  std::shared_ptr<ExecutionContextScope> ctx,
+                                  bool is_comp_assign = false) {
+  CompilerType lhs_type = lhs->GetCompilerType();
+  CompilerType rhs_type = rhs->GetCompilerType();
+
+  if (lhs_type.CompareTypes(rhs_type))
+    return;
+
+  if (lhs_type.IsFloat() || rhs_type.IsFloat()) {
+    if (lhs_type.IsFloat() && rhs_type.IsFloat()) {
+      int order = lhs_type.GetBasicTypeEnumeration() -
+                  rhs_type.GetBasicTypeEnumeration();
+      if (order > 0) {
+        rhs = rhs->CastToBasicType(lhs_type);
+        return;
+      }
+      if (!is_comp_assign)
+        lhs = lhs->CastToBasicType(rhs_type);
+      return;
+    }
+
+    if (lhs_type.IsFloat() && rhs_type.IsInteger()) {
+      rhs = rhs->CastToBasicType(lhs_type);
+      return;
+    }
+
+    if (rhs_type.IsFloat() && !is_comp_assign)
+      lhs = lhs->CastToBasicType(rhs_type);
+  }
+
+  if (lhs_type.IsInteger() && rhs_type.IsInteger()) {
+    using Rank = std::tuple<size_t, bool>;
+    Rank l_rank = {ConversionRank(lhs_type), !lhs_type.IsSigned()};
+    Rank r_rank = {ConversionRank(rhs_type), !rhs_type.IsSigned()};
+
+    if (l_rank < r_rank) {
+      PerformIntegerConversions(ctx, lhs, rhs, !is_comp_assign, true);
+    } else if (l_rank > r_rank) {
+      PerformIntegerConversions(ctx, rhs, lhs, true, !is_comp_assign);
+    }
+  }
+}
+
+bool IsCompAssign(BinaryOpKind kind) {
+  return (
+      (kind == BinaryOpKind::AddAssign) || (kind == BinaryOpKind::SubAssign) ||
+      (kind == BinaryOpKind::MulAssign) || (kind == BinaryOpKind::DivAssign) ||
+      (kind == BinaryOpKind::RemAssign) || (kind == BinaryOpKind::AndAssign) ||
+      (kind == BinaryOpKind::OrAssign) || (kind == BinaryOpKind::XorAssign) ||
+      (kind == BinaryOpKind::ShlAssign) || (kind == BinaryOpKind::ShrAssign));
+}
+
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const BinaryOpNode *node) {
   // Short-circuit logical operators.
@@ -1382,6 +1742,18 @@ Interpreter::Visit(const BinaryOpNode *node) {
   }
   lldb::ValueObjectSP rhs = *rhs_or_err;
 
+  // If either operand is a MemberOf node, we have not yet done the correct
+  // type checking & conversions, so we need to do them now.
+  if (llvm::isa<MemberOfNode>(node->lhs()) ||
+      llvm::isa<MemberOfNode>(node->rhs())) {
+    bool is_comp_assign = IsCompAssign(node->kind());
+    if (!is_comp_assign)
+      lhs = UnaryConversion(lhs, m_exe_ctx_scope);
+    rhs = UnaryConversion(rhs, m_exe_ctx_scope);
+    if (!is_comp_assign)
+      ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
+  }
+
   // For math operations, be sure to dereference the operands.
   if ((node->kind() == BinaryOpKind::Add)
       || (node->kind() == BinaryOpKind::Sub)
@@ -1403,7 +1775,7 @@ Interpreter::Visit(const BinaryOpNode *node) {
 
   switch (node->kind()) {
     case BinaryOpKind::Add:
-      return EvaluateBinaryAddition(lhs, rhs);
+      return EvaluateBinaryAddition(lhs, rhs, node->GetLocation());
     case BinaryOpKind::Sub:
       // The result type of subtraction is required because it holds the
       // correct "ptrdiff_t" type in the case of subtracting two pointers.
@@ -1412,7 +1784,7 @@ Interpreter::Visit(const BinaryOpNode *node) {
     case BinaryOpKind::Mul:
       return EvaluateBinaryMultiplication(lhs, rhs);
     case BinaryOpKind::Div:
-      return EvaluateBinaryDivision(lhs, rhs);
+      return EvaluateBinaryDivision(lhs, rhs, node->GetLocation());
     case BinaryOpKind::Rem:
       return EvaluateBinaryRemainder(lhs, rhs);
     case BinaryOpKind::And:
@@ -1435,13 +1807,13 @@ Interpreter::Visit(const BinaryOpNode *node) {
     case BinaryOpKind::Assign:
       return EvaluateAssignment(lhs, rhs);
     case BinaryOpKind::AddAssign:
-      return EvaluateBinaryAddAssign(lhs, rhs);
+      return EvaluateBinaryAddAssign(lhs, rhs, node->GetLocation());
     case BinaryOpKind::SubAssign:
       return EvaluateBinarySubAssign(lhs, rhs);
     case BinaryOpKind::MulAssign:
       return EvaluateBinaryMulAssign(lhs, rhs);
     case BinaryOpKind::DivAssign:
-      return EvaluateBinaryDivAssign(lhs, rhs);
+      return EvaluateBinaryDivAssign(lhs, rhs, node->GetLocation());
     case BinaryOpKind::RemAssign:
       return EvaluateBinaryRemAssign(lhs, rhs);
 
@@ -1498,6 +1870,13 @@ Interpreter::Visit(const UnaryOpNode *node) {
         return rhs;
     }
     case UnaryOpKind::AddrOf: {
+      if (rhs->IsBitfield()) {
+        Status error = Status(
+            (uint32_t)ErrorCode::kInvalidOperandType, lldb::eErrorTypeGeneric,
+            FormatDiagnostics(m_expr, "address of bit-field requested",
+                              node->GetLocation()));
+        return error.ToError();
+      }
       // If the address-of operation wasn't cancelled during the evaluation of
       // RHS (e.g. because of the address-of-a-dereference elision), apply it
       // here.
@@ -1559,10 +1938,21 @@ Interpreter::Visit(const TernaryOpNode *node) {
   // optimizations (e.g. "&*" elision).
   auto value_or_err = cond->GetValueAsBool();
   if (value_or_err) {
-    if (*value_or_err)
-      return DILEvalNode(node->lhs(), flow_analysis());
+    if (*value_or_err) {
+      auto lhs_or_err = DILEvalNode(node->lhs(), flow_analysis());
+      if (!lhs_or_err)
+        return lhs_or_err;
+      lldb::ValueObjectSP lhs = *lhs_or_err;
+      if (llvm::isa<MemberOfNode>(node->lhs()))
+        lhs = UnaryConversion(lhs, m_exe_ctx_scope);
+      return lhs;
+    }
 
-    return DILEvalNode(node->rhs(), flow_analysis());
+    auto rhs_or_err = DILEvalNode(node->rhs(), flow_analysis());
+    if (!rhs_or_err)
+      return rhs_or_err;
+    lldb::ValueObjectSP rhs = *rhs_or_err;
+    return rhs;
   }
   return value_or_err.takeError();
 }
@@ -1805,12 +2195,10 @@ Interpreter::EvaluateUnaryPrefixDecrement(lldb::ValueObjectSP rhs) {
 
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::EvaluateBinaryAddition(lldb::ValueObjectSP lhs,
-                                    lldb::ValueObjectSP rhs) {
+                                    lldb::ValueObjectSP rhs, uint32_t loc) {
   // Addition of two arithmetic types.
   if (lhs->GetCompilerType().IsScalarType()
       && rhs->GetCompilerType().IsScalarType()) {
-    assert(lhs->GetCompilerType().CompareTypes(rhs->GetCompilerType()) &&
-           "invalid ast: operand must have the same type");
     return EvaluateArithmeticOp(m_target, BinaryOpKind::Add, lhs, rhs,
                                 lhs->GetCompilerType().GetCanonicalType());
   }
@@ -1912,10 +2300,19 @@ Interpreter::EvaluateBinaryMultiplication(lldb::ValueObjectSP lhs,
 
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::EvaluateBinaryDivision(lldb::ValueObjectSP lhs,
-                                    lldb::ValueObjectSP rhs) {
-  assert((lhs->GetCompilerType().IsScalarType() &&
-          lhs->GetCompilerType().CompareTypes(rhs->GetCompilerType())) &&
-         "invalid ast: operands must be arithmetic and have the same type");
+                                    lldb::ValueObjectSP rhs, uint32_t loc) {
+  if (!lhs->GetCompilerType().IsScalarType() ||
+      !lhs->GetCompilerType().CompareTypes(rhs->GetCompilerType())) {
+    Status error = Status(
+        (uint32_t)ErrorCode::kInvalidOperandType, lldb::eErrorTypeGeneric,
+        FormatDiagnostics(
+            m_expr,
+            llvm::formatv("invalid operands to binary expression ({0} and {1})",
+                          lhs->GetCompilerType().TypeDescription(),
+                          rhs->GetCompilerType().TypeDescription()),
+            loc));
+    return error.ToError();
+  }
 
   // Check for zero only for integer division.
   if (rhs->GetCompilerType().IsInteger() && rhs->GetValueAsUnsigned(0) == 0) {
@@ -2014,13 +2411,13 @@ lldb::ValueObjectSP Interpreter::EvaluateAssignment(lldb::ValueObjectSP lhs,
 
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::EvaluateBinaryAddAssign(lldb::ValueObjectSP lhs,
-                                     lldb::ValueObjectSP rhs) {
+                                     lldb::ValueObjectSP rhs, uint32_t loc) {
   lldb::ValueObjectSP ret;
 
   if (lhs->GetCompilerType().IsPointerType()) {
     assert(rhs->GetCompilerType().IsInteger() &&
            "invalid ast: rhs must be an integer");
-    auto ret_or_err = EvaluateBinaryAddition(lhs, rhs);
+    auto ret_or_err = EvaluateBinaryAddition(lhs, rhs, loc);
     if (!ret_or_err)
       return ret_or_err;
     ret = *ret_or_err;
@@ -2030,7 +2427,7 @@ Interpreter::EvaluateBinaryAddAssign(lldb::ValueObjectSP lhs,
     assert(rhs->GetCompilerType().IsBasicType() &&
            "invalid ast: rhs must be a basic type");
     ret = lhs->CastToBasicType(rhs->GetCompilerType());
-    auto ret_or_err = EvaluateBinaryAddition(ret, rhs);
+    auto ret_or_err = EvaluateBinaryAddition(ret, rhs, loc);
     if (!ret_or_err)
       return ret_or_err;
     ret = *ret_or_err;
@@ -2099,14 +2496,14 @@ Interpreter::EvaluateBinaryMulAssign(lldb::ValueObjectSP lhs,
 
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::EvaluateBinaryDivAssign(lldb::ValueObjectSP lhs,
-                                     lldb::ValueObjectSP rhs) {
+                                     lldb::ValueObjectSP rhs, uint32_t loc) {
   assert(lhs->GetCompilerType().IsScalarType()
          && "invalid ast: lhs must be an arithmetic type");
   assert(rhs->GetCompilerType().IsBasicType()
          && "invalid ast: rhs must be a basic type");
 
   lldb::ValueObjectSP ret = lhs->CastToBasicType(rhs->GetCompilerType());
-  auto ret_or_err = EvaluateBinaryDivision(ret, rhs);
+  auto ret_or_err = EvaluateBinaryDivision(ret, rhs, loc);
   if (!ret_or_err)
     return ret_or_err;
   ret = *ret_or_err;

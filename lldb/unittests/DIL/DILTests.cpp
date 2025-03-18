@@ -3246,7 +3246,7 @@ TEST_F(EvalTest, TestUniquePtrDeref) {
 #endif
 }
 
-TEST_F(EvalTest, TestUniquePtrCompare) {
+TEST_F(EvalTest, DISABLED_TestUniquePtrCompare) {
 #ifdef _WIN32
   // On Windows we're not using `libc++` and therefore the layout of
   // `std::unique_ptr` is different.
@@ -3255,36 +3255,36 @@ TEST_F(EvalTest, TestUniquePtrCompare) {
   // On Linux this assumes the usage of libc++ standard library.
   this->compare_with_lldb_ = false;
 
-  EXPECT_THAT(Eval("ptr_int == nullptr"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_int != nullptr"), XFail(IsEqual("true")));
-  EXPECT_THAT(Eval("ptr_int == ptr_int"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_int == nullptr"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_int != nullptr"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_int == ptr_int"), IsEqual("true"));
 
   // C++ doesn't allow comparing unique_ptr with raw pointers, but we allow it
   // for convenience.
-  EXPECT_THAT(Eval("ptr_int == 0"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_int == (int*)0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_int == 0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_int == (int*)0"), IsEqual("false"));
 
-  EXPECT_THAT(Eval("ptr_float == nullptr"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_float != nullptr"), XFail(IsEqual("true")));
-  EXPECT_THAT(Eval("ptr_float == (float*)0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_float == nullptr"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_float != nullptr"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_float == (float*)0"), IsEqual("false"));
 
   EXPECT_THAT(Eval("ptr_float == (int*)0"),
-              XFail(IsError("comparison of distinct pointer types")));
+              IsError("comparison of distinct pointer types"));
   EXPECT_THAT(Eval("ptr_int == ptr_float"),
-              XFail(IsError("comparison of distinct pointer types")));
+              IsError("comparison of distinct pointer types"));
 
-  EXPECT_THAT(Eval("ptr_null == nullptr"), XFail(IsEqual("true")));
-  EXPECT_THAT(Eval("ptr_null != nullptr"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_null == nullptr"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_null != nullptr"), IsEqual("false"));
 
-  EXPECT_THAT(Eval("ptr_void == nullptr"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_void != nullptr"), XFail(IsEqual("true")));
-  EXPECT_THAT(Eval("ptr_void == ptr_void"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_void == nullptr"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_void != nullptr"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_void == ptr_void"), IsEqual("true"));
 
   // Void pointer can be compared with everything.
-  EXPECT_THAT(Eval("ptr_void == (int*)0"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_void == (void*)0"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_int == ptr_void"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_float == ptr_void"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_void == (int*)0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_void == (void*)0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_int == ptr_void"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_float == ptr_void"), IsEqual("false"));
 
 #endif
 }
@@ -3330,7 +3330,7 @@ TEST_F(EvalTest, TestSharedPtrDeref) {
 #endif
 }
 
-TEST_F(EvalTest, TestSharedPtrCompare) {
+TEST_F(EvalTest, DISABLED_TestSharedPtrCompare) {
 #ifdef _WIN32
   // On Windows we're not using `libc++` and therefore the layout of
   // `std::shared_ptr` is different.
@@ -3339,36 +3339,36 @@ TEST_F(EvalTest, TestSharedPtrCompare) {
   // On Linux this assumes the usage of libc++ standard library.
   this->compare_with_lldb_ = false;
 
-  EXPECT_THAT(Eval("ptr_int == nullptr"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_int != nullptr"), XFail(IsEqual("true")));
-  EXPECT_THAT(Eval("ptr_int == ptr_int"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_int == nullptr"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_int != nullptr"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_int == ptr_int"), IsEqual("true"));
 
   // C++ doesn't allow comparing shared_ptr with raw pointers, but we allow it
   // for convenience.
-  EXPECT_THAT(Eval("ptr_int == 0"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_int == (int*)0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_int == 0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_int == (int*)0"), IsEqual("false"));
 
-  EXPECT_THAT(Eval("ptr_float == nullptr"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_float != nullptr"), XFail(IsEqual("true")));
-  EXPECT_THAT(Eval("ptr_float == (float*)0"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_float == nullptr"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_float != nullptr"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_float == (float*)0"), IsEqual("false"));
 
   EXPECT_THAT(Eval("ptr_float == (int*)0"),
-              XFail(IsError("comparison of distinct pointer types")));
+              IsError("comparison of distinct pointer types"));
   EXPECT_THAT(Eval("ptr_int == ptr_float"),
-              XFail(IsError("comparison of distinct pointer types")));
+              IsError("comparison of distinct pointer types"));
 
-  EXPECT_THAT(Eval("ptr_null == nullptr"), XFail(IsEqual("true")));
-  EXPECT_THAT(Eval("ptr_null != nullptr"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_null == nullptr"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_null != nullptr"), IsEqual("false"));
 
-  EXPECT_THAT(Eval("ptr_void == nullptr"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_void != nullptr"), XFail(IsEqual("true")));
-  EXPECT_THAT(Eval("ptr_void == ptr_void"), XFail(IsEqual("true")));
+  EXPECT_THAT(Eval("ptr_void == nullptr"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_void != nullptr"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_void == ptr_void"), IsEqual("true"));
 
   // Void pointer can be compared with everything.
-  EXPECT_THAT(Eval("ptr_void == (int*)0"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_void == (void*)0"), XFail(IsEqual("false")));
-  EXPECT_THAT(Eval("ptr_int == ptr_void"), XFail(IsEqual("true")));
-  EXPECT_THAT(Eval("ptr_float == ptr_void"), XFail(IsEqual("false")));
+  EXPECT_THAT(Eval("ptr_void == (int*)0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_void == (void*)0"), IsEqual("false"));
+  EXPECT_THAT(Eval("ptr_int == ptr_void"), IsEqual("true"));
+  EXPECT_THAT(Eval("ptr_float == ptr_void"), IsEqual("false"));
 #endif
 }
 

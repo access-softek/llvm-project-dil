@@ -1682,36 +1682,52 @@ PerformIntegerConversions(std::shared_ptr<ExecutionContextScope> ctx,
     lhs = lhs->CastToBasicType(rhs->GetCompilerType());
 }
 
-static void ArithmeticConversions(lldb::ValueObjectSP &lhs,
-                                  lldb::ValueObjectSP &rhs,
-                                  std::shared_ptr<ExecutionContextScope> ctx,
-                                  bool is_comp_assign = false) {
+static CompilerType
+ArithmeticConversions(lldb::ValueObjectSP &lhs, lldb::ValueObjectSP &rhs,
+                      std::shared_ptr<ExecutionContextScope> ctx,
+                      bool is_comp_assign = false) {
+  // Apply unary conversion (e.g. intergal promotion) for both operands.
+  // In case of a composite assignment operator LHS shouldn't get promoted.
+  if (!is_comp_assign) {
+    lhs = UnaryConversion(lhs, ctx);
+  }
+  rhs = UnaryConversion(rhs, ctx);
+
   CompilerType lhs_type = lhs->GetCompilerType();
   CompilerType rhs_type = rhs->GetCompilerType();
 
   if (lhs_type.CompareTypes(rhs_type))
-    return;
+    return lhs_type;
 
+  // If either of the operands is not arithmetic (e.g. pointer), we're done.
+  if (!lhs_type.IsScalarType() || !rhs_type.IsScalarType()) {
+    CompilerType bad_type;
+    return bad_type;
+  }
+
+  // Handle conversions for floating types (float, double).
   if (lhs_type.IsFloat() || rhs_type.IsFloat()) {
+    // If both are floats, convert the smaller operand to the bigger.
     if (lhs_type.IsFloat() && rhs_type.IsFloat()) {
       int order = lhs_type.GetBasicTypeEnumeration() -
                   rhs_type.GetBasicTypeEnumeration();
       if (order > 0) {
         rhs = rhs->CastToBasicType(lhs_type);
-        return;
+        return lhs_type;
       }
       if (!is_comp_assign)
         lhs = lhs->CastToBasicType(rhs_type);
-      return;
+      return rhs_type;
     }
 
     if (lhs_type.IsFloat() && rhs_type.IsInteger()) {
       rhs = rhs->CastToBasicType(lhs_type);
-      return;
+      return lhs_type;
     }
 
     if (rhs_type.IsFloat() && !is_comp_assign)
       lhs = lhs->CastToBasicType(rhs_type);
+    return rhs_type;
   }
 
   if (lhs_type.IsInteger() && rhs_type.IsInteger()) {
@@ -1725,6 +1741,12 @@ static void ArithmeticConversions(lldb::ValueObjectSP &lhs,
       PerformIntegerConversions(ctx, rhs, lhs, true, !is_comp_assign);
     }
   }
+  if (!is_comp_assign) {
+    assert(lhs->GetCompilerType().GetCanonicalType().CompareTypes(
+               rhs->GetCompilerType().GetCanonicalType()) &&
+           "integral promotion error: operands result types must be the same");
+  }
+  return rhs_type;
 }
 
 bool IsCompAssign(BinaryOpKind kind) {
@@ -1734,6 +1756,126 @@ bool IsCompAssign(BinaryOpKind kind) {
       (kind == BinaryOpKind::RemAssign) || (kind == BinaryOpKind::AndAssign) ||
       (kind == BinaryOpKind::OrAssign) || (kind == BinaryOpKind::XorAssign) ||
       (kind == BinaryOpKind::ShlAssign) || (kind == BinaryOpKind::ShrAssign));
+}
+
+llvm::Error Interpreter::PrepareBinaryAddition(lldb::ValueObjectSP &lhs,
+                                               lldb::ValueObjectSP &rhs,
+                                               uint32_t location,
+                                               bool is_comp_assign) {
+  // Operation '+' works for:
+  //
+  //  {scalar,unscoped_enum} <-> {scalar,unscoped_enum}
+  //  {integer,unscoped_enum} <-> pointer
+  //  pointer <-> {integer,unscoped_enum}
+  auto orig_lhs_type = lhs->GetCompilerType();
+  auto orig_rhs_type = rhs->GetCompilerType();
+  auto result_type =
+      ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
+
+  if (result_type.IsScalarType()) {
+    return llvm::Error::success();
+  }
+
+  auto lhs_type = lhs->GetCompilerType();
+  auto rhs_type = rhs->GetCompilerType();
+
+  // Check for pointer arithmetic operation.
+  CompilerType ptr_type, integer_type;
+
+  if (lhs_type.IsPointerType()) {
+    ptr_type = lhs_type;
+    integer_type = rhs_type;
+  } else if (rhs_type.IsPointerType()) {
+    integer_type = lhs_type;
+    ptr_type = rhs_type;
+  }
+
+  if (!ptr_type || !integer_type.IsInteger()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv(kInvalidOperandsToBinaryExpression,
+                                 orig_lhs_type.TypeDescription(),
+                                 orig_rhs_type.TypeDescription()),
+                   location);
+  }
+
+  if (ptr_type.IsPointerToVoid()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   "arithmetic on a pointer to void", location);
+  }
+  return llvm::Error::success();
+}
+
+static lldb::BasicType
+GetPtrDiffType(std::shared_ptr<ExecutionContextScope> ctx) {
+  lldb::TargetSP target_sp = ctx->CalculateTarget();
+  llvm::Triple triple(
+      llvm::Twine(target_sp->GetArchitecture().GetTriple().str()));
+
+  if (triple.isOSWindows()) {
+    return triple.isArch64Bit() ? lldb::eBasicTypeLongLong
+                                : lldb::eBasicTypeInt;
+  } else {
+    return triple.isArch64Bit() ? lldb::eBasicTypeLong : lldb::eBasicTypeInt;
+  }
+}
+
+llvm::Error Interpreter::PrepareBinarySubtraction(lldb::ValueObjectSP &lhs,
+                                                  lldb::ValueObjectSP &rhs,
+                                                  uint32_t location,
+                                                  bool is_comp_assign) {
+  // Operation '-' works for:
+  //
+  //  {scalar,unscoped_enum} <-> {scalar,unscoped_enum}
+  //  pointer <-> {integer,unscoped_enum}
+  //  pointer <-> pointer (if pointee types are compatible)
+
+  auto orig_lhs_type = lhs->GetCompilerType();
+  auto orig_rhs_type = rhs->GetCompilerType();
+  auto result_type =
+      ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
+
+  if (result_type.IsScalarType()) {
+    return llvm::Error::success();
+  }
+
+  auto lhs_type = lhs->GetCompilerType();
+  auto rhs_type = rhs->GetCompilerType();
+
+  if (lhs_type.IsPointerType() && rhs_type.IsInteger()) {
+    if (lhs_type.IsPointerToVoid()) {
+      return BailOut(ErrorCode::kInvalidOperandType,
+                     "arithmetic on a pointer to void", location);
+    }
+    return llvm::Error::success();
+  }
+
+  if (lhs_type.IsPointerType() && rhs_type.IsPointerType()) {
+    if (lhs_type.IsPointerToVoid() && rhs_type.IsPointerToVoid()) {
+      return BailOut(ErrorCode::kInvalidOperandType,
+                     "arithmetic on pointers to void", location);
+    }
+
+    // Compare canonical unqualified pointer types.
+    CompilerType lhs_unqualified_type =
+        lhs_type.GetCanonicalType().GetFullyUnqualifiedType();
+    CompilerType rhs_unqualified_type =
+        rhs_type.GetCanonicalType().GetFullyUnqualifiedType();
+    bool comparable = lhs_unqualified_type.CompareTypes(rhs_unqualified_type);
+
+    if (!comparable) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("{0} and {1} are not pointers to compatible types",
+                        lhs_type.TypeDescription(), rhs_type.TypeDescription()),
+          location);
+    }
+    return llvm::Error::success();
+  }
+  return BailOut(ErrorCode::kInvalidOperandType,
+                 llvm::formatv(kInvalidOperandsToBinaryExpression,
+                               orig_lhs_type.TypeDescription(),
+                               orig_rhs_type.TypeDescription()),
+                 location);
 }
 
 llvm::Expected<lldb::ValueObjectSP>
@@ -1835,12 +1977,16 @@ Interpreter::Visit(const BinaryOpNode *node) {
 
   switch (node->kind()) {
     case BinaryOpKind::Add:
-      return EvaluateBinaryAddition(lhs, rhs, node->GetLocation());
-    case BinaryOpKind::Sub:
-      // The result type of subtraction is required because it holds the
-      // correct "ptrdiff_t" type in the case of subtracting two pointers.
-      return EvaluateBinarySubtraction(lhs, rhs,
-                                       node->GetDereferencedResultType());
+      if (auto err =
+              PrepareBinaryAddition(lhs, rhs, node->GetLocation(), false))
+        return err;
+      return EvaluateBinaryAddition(lhs, rhs);
+    case BinaryOpKind::Sub: {
+      if (auto err =
+              PrepareBinarySubtraction(lhs, rhs, node->GetLocation(), false))
+        return err;
+      return EvaluateBinarySubtraction(lhs, rhs);
+    }
     case BinaryOpKind::Mul:
       return EvaluateBinaryMultiplication(lhs, rhs);
     case BinaryOpKind::Div:
@@ -2338,7 +2484,7 @@ Interpreter::EvaluateUnaryPrefixDecrement(lldb::ValueObjectSP rhs) {
 
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::EvaluateBinaryAddition(lldb::ValueObjectSP lhs,
-                                    lldb::ValueObjectSP rhs, uint32_t loc) {
+                                    lldb::ValueObjectSP rhs) {
   // Addition of two arithmetic types.
   if (lhs->GetCompilerType().IsScalarType()
       && rhs->GetCompilerType().IsScalarType()) {
@@ -2371,8 +2517,7 @@ Interpreter::EvaluateBinaryAddition(lldb::ValueObjectSP lhs,
 
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::EvaluateBinarySubtraction(lldb::ValueObjectSP lhs,
-                                       lldb::ValueObjectSP rhs,
-                                       CompilerType result_type) {
+                                       lldb::ValueObjectSP rhs) {
   if (lhs->GetCompilerType().IsScalarType()
       && rhs->GetCompilerType().IsScalarType()) {
     assert(lhs->GetCompilerType().CompareTypes(rhs->GetCompilerType()) &&
@@ -2419,15 +2564,17 @@ Interpreter::EvaluateBinarySubtraction(lldb::ValueObjectSP lhs,
   diff /= static_cast<int64_t>(item_size);
 
   // Pointer difference is ptrdiff_t.
+  auto ptrdiff_t =
+      GetBasicType(m_exe_ctx_scope, GetPtrDiffType(m_exe_ctx_scope));
   ExecutionContext exe_ctx(m_target.get(), false);
   uint64_t byte_size = 0;
-  if (auto temp = result_type.GetByteSize(m_target.get()))
+  if (auto temp = ptrdiff_t.GetByteSize(m_target.get()))
     byte_size = temp.value();
   lldb::DataExtractorSP data_sp = std::make_shared<DataExtractor>(
       reinterpret_cast<const void*>(&diff), byte_size,
       exe_ctx.GetByteOrder(), exe_ctx.GetAddressByteSize());
   return ValueObject::CreateValueObjectFromData("result", *data_sp, exe_ctx,
-                                                result_type);
+                                                ptrdiff_t);
 }
 
 lldb::ValueObjectSP
@@ -2560,7 +2707,7 @@ Interpreter::EvaluateBinaryAddAssign(lldb::ValueObjectSP lhs,
   if (lhs->GetCompilerType().IsPointerType()) {
     assert(rhs->GetCompilerType().IsInteger() &&
            "invalid ast: rhs must be an integer");
-    auto ret_or_err = EvaluateBinaryAddition(lhs, rhs, loc);
+    auto ret_or_err = EvaluateBinaryAddition(lhs, rhs);
     if (!ret_or_err)
       return ret_or_err;
     ret = *ret_or_err;
@@ -2570,7 +2717,7 @@ Interpreter::EvaluateBinaryAddAssign(lldb::ValueObjectSP lhs,
     assert(rhs->GetCompilerType().IsBasicType() &&
            "invalid ast: rhs must be a basic type");
     ret = lhs->CastToBasicType(rhs->GetCompilerType());
-    auto ret_or_err = EvaluateBinaryAddition(ret, rhs, loc);
+    auto ret_or_err = EvaluateBinaryAddition(ret, rhs);
     if (!ret_or_err)
       return ret_or_err;
     ret = *ret_or_err;
@@ -2592,8 +2739,7 @@ Interpreter::EvaluateBinarySubAssign(lldb::ValueObjectSP lhs,
   if (lhs->GetCompilerType().IsPointerType()) {
     assert(rhs->GetCompilerType().IsInteger() &&
            "invalid ast: rhs must be an integer");
-    auto ret_or_err =
-        EvaluateBinarySubtraction(lhs, rhs, lhs->GetCompilerType());
+    auto ret_or_err = EvaluateBinarySubtraction(lhs, rhs);
     if (!ret_or_err)
       return ret_or_err;
     ret = *ret_or_err;
@@ -2603,8 +2749,7 @@ Interpreter::EvaluateBinarySubAssign(lldb::ValueObjectSP lhs,
     assert(rhs->GetCompilerType().IsBasicType() &&
            "invalid ast: rhs must be a basic type");
     ret = lhs->CastToBasicType(rhs->GetCompilerType());
-    auto ret_or_err =
-        EvaluateBinarySubtraction(ret, rhs, ret->GetCompilerType());
+    auto ret_or_err = EvaluateBinarySubtraction(ret, rhs);
     if (!ret_or_err)
       return ret_or_err;
     ret = *ret_or_err;

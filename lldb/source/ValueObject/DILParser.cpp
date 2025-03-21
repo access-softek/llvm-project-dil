@@ -1325,8 +1325,9 @@ ASTNodeUP DILParser::ParseUnaryExpression() {
       // No opening parenthesis means this must be an unary_expression.
       operand = ParseUnaryExpression()->GetDereferencedResultType();
     }
-    if (!operand.IsValid())
-      return std::make_unique<ErrorNode>();
+    // TODO: move
+    // if (!operand.IsValid())
+    //   return std::make_unique<ErrorNode>();
 
     lldb::BasicType size_type;
     llvm::Triple triple(llvm::Twine(
@@ -2993,11 +2994,17 @@ ASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs,
 
   switch (kind) {
     case BinaryOpKind::Add:
+      return std::make_unique<BinaryOpNode>(location, result_type, kind,
+                                            std::move(lhs), std::move(rhs),
+                                            comp_assign_type, nullptr);
       result_type =
           PrepareBinaryAddition(lhs, rhs, location, /*is_comp_assign*/ false);
       break;
 
     case BinaryOpKind::Sub:
+      return std::make_unique<BinaryOpNode>(location, result_type, kind,
+                                            std::move(lhs), std::move(rhs),
+                                            comp_assign_type, nullptr);
       result_type = PrepareBinarySubtraction(lhs, rhs, location,
                                              /*is_comp_assign*/ false);
       break;

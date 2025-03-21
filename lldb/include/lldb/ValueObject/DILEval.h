@@ -117,11 +117,9 @@ public:
    lldb::ValueObjectSP EvaluateUnaryPrefixDecrement(lldb::ValueObjectSP rhs);
 
    llvm::Expected<lldb::ValueObjectSP>
-   EvaluateBinaryAddition(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs,
-                          uint32_t loc);
+   EvaluateBinaryAddition(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
    llvm::Expected<lldb::ValueObjectSP>
-   EvaluateBinarySubtraction(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs,
-                             CompilerType result_type);
+   EvaluateBinarySubtraction(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
    lldb::ValueObjectSP EvaluateBinaryMultiplication(lldb::ValueObjectSP lhs,
                                                     lldb::ValueObjectSP rhs);
    llvm::Expected<lldb::ValueObjectSP>
@@ -163,6 +161,12 @@ public:
 
    llvm::Error CheckIncrementDecrement(const UnaryOpNode *node,
                                        CompilerType rhs_type);
+   llvm::Error PrepareBinaryAddition(lldb::ValueObjectSP &lhs,
+                                     lldb::ValueObjectSP &rhs,
+                                     uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinarySubtraction(lldb::ValueObjectSP &lhs,
+                                        lldb::ValueObjectSP &rhs,
+                                        uint32_t location, bool is_comp_assign);
 
    FlowAnalysis *flow_analysis() { return m_flow_analysis_chain.back(); }
 

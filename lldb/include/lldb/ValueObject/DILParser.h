@@ -259,8 +259,6 @@ class DILParser {
    ASTNodeUP BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
                                      uint32_t location);
    ASTNodeUP BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs, uint32_t location);
-   ASTNodeUP BuildIncrementDecrement(UnaryOpKind kind, ASTNodeUP rhs,
-                                     uint32_t location);
    ASTNodeUP BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs, ASTNodeUP rhs,
                            uint32_t location);
    CompilerType PrepareBinaryAddition(ASTNodeUP &lhs, ASTNodeUP &rhs,

@@ -581,10 +581,9 @@ private:
 
 class UnaryOpNode : public ASTNode {
 public:
-  UnaryOpNode(uint32_t location, CompilerType result_type, UnaryOpKind kind,
-              ASTNodeUP rhs)
-      : ASTNode(location, NodeKind::eUnaryOpNode), m_result_type(result_type),
-        m_kind(kind), m_rhs(std::move(rhs)) {}
+  UnaryOpNode(uint32_t location, UnaryOpKind kind, ASTNodeUP rhs)
+      : ASTNode(location, NodeKind::eUnaryOpNode), m_kind(kind),
+        m_rhs(std::move(rhs)) {}
 
   llvm::Expected<lldb::ValueObjectSP> Accept(Visitor *v) const override;
   bool is_rvalue() const override { return m_kind != UnaryOpKind::Deref; }

@@ -19,7 +19,25 @@
 #include "llvm/Support/FormatVariadic.h"
 #include <memory>
 
+namespace {
+const char *kInvalidOperandsToUnaryExpression =
+    "invalid argument type {0} to unary expression";
+
+const char *kInvalidOperandsToBinaryExpression =
+    "invalid operands to binary expression ({0} and {1})";
+
+const char *kValueIsNotConvertibleToBool =
+    "value of type {0} is not contextually convertible to 'bool'";
+} // namespace
+
 namespace lldb_private::dil {
+
+llvm::Error Interpreter::BailOut(ErrorCode code, const std::string &message,
+                                 uint32_t loc) {
+  Status error = Status((uint32_t)code, lldb::eErrorTypeGeneric,
+                        FormatDiagnostics(m_expr, message, loc));
+  return error.ToError();
+}
 
 lldb::ValueObjectSP
 GetDynamicOrSyntheticValue(lldb::ValueObjectSP in_valobj_sp,
@@ -79,9 +97,8 @@ template <typename T> bool Compare(BinaryOpKind kind, const T &l, const T &r) {
 }
 
 static uint64_t GetUInt64(lldb::ValueObjectSP value_sp) {
-  // GetValueAsUnsigned performs overflow according to the underlying type. Fo\
-r
-  // example, if the underlying type is `int32_t` and the value is `-1`,
+  // GetValueAsUnsigned performs overflow according to the underlying type.
+  // For example, if the underlying type is `int32_t` and the value is `-1`,
   // GetValueAsUnsigned will return 4294967295.
   return value_sp->GetCompilerType().IsSigned()
       ? value_sp->GetValueAsSigned(0)
@@ -847,13 +864,13 @@ Interpreter::Visit(const BuiltinFunctionCallNode *node) {
           process->ReadMemory(addr + i * ptr_size, &memory, ptr_size, error);
 
       if (error.Fail() || read != ptr_size) {
+        const char *message = error.AsCString();
         Status error =
             Status((uint32_t)ErrorCode::kUnknown, lldb::eErrorTypeGeneric,
                    FormatDiagnostics(
                        m_expr,
                        llvm::formatv("error calling __findnonnull(): {0}",
-                                     error.AsCString() ? error.AsCString()
-                                                       : "cannot read memory"),
+                                     message ? message : "cannot read memory"),
                        node->GetLocation()));
         return error.ToError();
       }
@@ -1502,16 +1519,55 @@ DoIntegralPromotion(CompilerType from,
 
     llvm_unreachable("char type should fit into long long");
   }
-  return from;
+
+  // Here we can promote only to "int" or "unsigned int".
+  CompilerType int_type = GetBasicType(ctx, lldb::eBasicTypeInt);
+  uint64_t int_byte_size = 0;
+  if (auto temp = int_type.GetByteSize(ctx.get()))
+    int_byte_size = temp.value();
+
+  // Signed integer types can be safely promoted to "int".
+  if (from.IsSigned()) {
+    return int_type;
+  }
+  // Unsigned integer types are promoted to "unsigned int" if "int" cannot hold
+  // their entire value range.
+  return (from_size == int_byte_size)
+             ? GetBasicType(ctx, lldb::eBasicTypeUnsignedInt)
+             : int_type;
+}
+
+static lldb::ValueObjectSP
+ArrayToPointerConversion(lldb::ValueObjectSP valobj,
+                         std::shared_ptr<ExecutionContextScope> ctx) {
+  assert(valobj->IsArrayType() &&
+         "an argument to array-to-pointer conversion must be an array");
+
+  uint64_t addr = valobj->GetLoadAddress();
+  llvm::StringRef name = "result";
+  ExecutionContext exe_ctx;
+  ctx->CalculateExecutionContext(exe_ctx);
+  return ValueObject::CreateValueObjectFromAddress(
+      name, addr, exe_ctx,
+      valobj->GetCompilerType().GetArrayElementType(ctx.get()).GetPointerType(),
+      /* do_deref */ false);
 }
 
 static lldb::ValueObjectSP
 UnaryConversion(lldb::ValueObjectSP valobj,
                 std::shared_ptr<ExecutionContextScope> ctx) {
+  // Perform usual conversions for unary operators. At the moment this includes
+  // array-to-pointer and the integral promotion for eligible types.
   CompilerType in_type = valobj->GetCompilerType();
   CompilerType result_type;
   if (valobj->IsBitfield()) {
+    // Promote bitfields. If `int` can represent the bitfield value, it is
+    // converted to `int`. Otherwise, if `unsigned int` can represent it, it
+    // is converted to `unsigned int`. Otherwise, it is treated as its
+    // underlying type.
     uint32_t bitfield_size = valobj->GetBitfieldBitSize();
+    // Some bitfields have undefined size (e.g. result of ternary operation).
+    // The AST's `bitfield_size` of those is 0, and no promotion takes place.
     if (bitfield_size > 0 && in_type.IsInteger()) {
       auto int_type = GetBasicType(ctx, lldb::eBasicTypeInt);
       auto uint_type = GetBasicType(ctx, lldb::eBasicTypeUnsignedInt);
@@ -1528,6 +1584,10 @@ UnaryConversion(lldb::ValueObjectSP valobj,
       else if (bitfield_size <= uint_byte_size * CHAR_BIT)
         valobj = valobj->CastToBasicType(uint_type);
     }
+  }
+
+  if (in_type.IsArrayType()) {
+    valobj = ArrayToPointerConversion(valobj, ctx);
   }
 
   if (valobj->GetCompilerType().IsInteger() ||
@@ -1835,6 +1895,48 @@ Interpreter::Visit(const BinaryOpNode *node) {
   return error.ToError();
 }
 
+llvm::Error Interpreter::CheckIncrementDecrement(const UnaryOpNode *node,
+                                                 CompilerType rhs_type) {
+
+  // In C++ the requirement here is that the expression is "assignable". However
+  // in the debugger context side-effects are not allowed and the only case
+  // where increment/decrement are permitted is when modifying the "context
+  // variable".
+  // Technically, `++(++$var)` could be allowed too, since both increments
+  // modify the context variable. However, MSVC debugger doesn't allow it, so we
+  // don't implement it too.
+  if (node->rhs()->is_rvalue()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv("expression is not assignable"),
+                   node->GetLocation());
+  }
+  if (!node->rhs()->is_context_var() && !AllowSideEffects()) {
+    return BailOut(
+        ErrorCode::kInvalidOperandType,
+        llvm::formatv("side effects are not supported in this context: "
+                      "trying to modify data at the target process"),
+        node->GetLocation());
+  }
+  auto kind = node->kind();
+  llvm::StringRef op_name =
+      (kind == UnaryOpKind::PreInc || kind == UnaryOpKind::PostInc)
+          ? "increment"
+          : "decrement";
+  if (rhs_type.IsEnumerationType()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv("cannot {0} expression of enum type '{1}'",
+                                 op_name, rhs_type.GetTypeName()),
+                   node->GetLocation());
+  }
+  if (!rhs_type.IsScalarType() && !rhs_type.IsPointerType()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv("cannot {0} value of type '{1}'", op_name,
+                                 rhs_type.GetTypeName()),
+                   node->GetLocation());
+  }
+  return llvm::Error::success();
+}
+
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const UnaryOpNode *node) {
   FlowAnalysis rhs_flow(
@@ -1852,30 +1954,37 @@ Interpreter::Visit(const UnaryOpNode *node) {
     if (error.Fail())
       return error.ToError();
   }
+  CompilerType rhs_type = rhs->GetCompilerType();
 
   switch (node->kind()) {
-    case UnaryOpKind::Deref:
-      {
-        lldb::ValueObjectSP dynamic_rhs =
-            rhs->GetDynamicValue(m_default_dynamic);
-        if (dynamic_rhs)
-          rhs = dynamic_rhs;
+    case UnaryOpKind::Deref: {
+      if (rhs_type.IsArrayType()) {
+        rhs = ArrayToPointerConversion(rhs, m_exe_ctx_scope);
+      }
 
-        if (rhs->GetCompilerType().IsPointerType())
-          return EvaluateDereference(rhs);
-        lldb::ValueObjectSP child_sp = rhs->Dereference(error);
-        if (error.Success())
-          rhs = child_sp;
+      lldb::ValueObjectSP dynamic_rhs = rhs->GetDynamicValue(m_default_dynamic);
+      if (dynamic_rhs)
+        rhs = dynamic_rhs;
 
-        return rhs;
+      if (rhs->GetCompilerType().IsPointerType())
+        return EvaluateDereference(rhs);
+      lldb::ValueObjectSP child_sp = rhs->Dereference(error);
+      if (error.Success())
+        rhs = child_sp;
+
+      return rhs;
     }
     case UnaryOpKind::AddrOf: {
+      if (node->rhs()->is_rvalue()) {
+        return BailOut(
+            ErrorCode::kInvalidOperandType,
+            llvm::formatv("cannot take the address of an rvalue of type {0}",
+                          rhs_type.TypeDescription()),
+            node->GetLocation());
+      }
       if (rhs->IsBitfield()) {
-        Status error = Status(
-            (uint32_t)ErrorCode::kInvalidOperandType, lldb::eErrorTypeGeneric,
-            FormatDiagnostics(m_expr, "address of bit-field requested",
-                              node->GetLocation()));
-        return error.ToError();
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       "address of bit-field requested", node->GetLocation());
       }
       // If the address-of operation wasn't cancelled during the evaluation of
       // RHS (e.g. because of the address-of-a-dereference elision), apply it
@@ -1890,32 +1999,66 @@ Interpreter::Visit(const UnaryOpNode *node) {
       return rhs;
     }
     case UnaryOpKind::Plus:
+      rhs = UnaryConversion(rhs, m_exe_ctx_scope);
+      rhs_type = rhs->GetCompilerType();
+      if (!rhs_type.IsScalarType() &&
+          // Unary plus is allowed for pointers.
+          !rhs_type.IsPointerType()) {
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       llvm::formatv(kInvalidOperandsToUnaryExpression,
+                                     rhs_type.TypeDescription()),
+                       node->GetLocation());
+      }
       return rhs;
     case UnaryOpKind::Minus:
+      rhs = UnaryConversion(rhs, m_exe_ctx_scope);
+      rhs_type = rhs->GetCompilerType();
+      if (!rhs_type.IsScalarType())
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       llvm::formatv(kInvalidOperandsToUnaryExpression,
+                                     rhs_type.TypeDescription()),
+                       node->GetLocation());
       return EvaluateUnaryMinus(rhs);
     case UnaryOpKind::LNot:
+      if (!rhs_type.IsContextuallyConvertibleToBool())
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       llvm::formatv(kInvalidOperandsToUnaryExpression,
+                                     rhs_type.TypeDescription()),
+                       node->GetLocation());
       return EvaluateUnaryNegation(rhs);
     case UnaryOpKind::Not:
+      rhs = UnaryConversion(rhs, m_exe_ctx_scope);
+      rhs_type = rhs->GetCompilerType();
+      if (!rhs_type.IsInteger())
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       llvm::formatv(kInvalidOperandsToUnaryExpression,
+                                     rhs_type.TypeDescription()),
+                       node->GetLocation());
       return EvaluateUnaryBitwiseNot(rhs);
     case UnaryOpKind::PreInc:
+      if (llvm::Error err = CheckIncrementDecrement(node, rhs_type))
+        return err;
       return EvaluateUnaryPrefixIncrement(rhs);
     case UnaryOpKind::PreDec:
+      if (llvm::Error err = CheckIncrementDecrement(node, rhs_type))
+        return err;
       return EvaluateUnaryPrefixDecrement(rhs);
     case UnaryOpKind::PostInc: {
+      if (llvm::Error err = CheckIncrementDecrement(node, rhs_type))
+        return err;
       // In postfix inc/dec the result is the original value.
       lldb::ValueObjectSP val2 = rhs->Clone(ConstString("cloned-object"));
       EvaluateUnaryPrefixIncrement(rhs);
       return val2;
     }
     case UnaryOpKind::PostDec: {
+      if (llvm::Error err = CheckIncrementDecrement(node, rhs_type))
+        return err;
       // In postfix inc/dec the result is the original value.
       lldb::ValueObjectSP val2 = rhs->Clone(ConstString("cloned-object"));
       EvaluateUnaryPrefixDecrement(rhs);
       return val2;
     }
-
-    default:
-      break;
   }
 
   // Unsupported/invalid operation.

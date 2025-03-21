@@ -61,7 +61,15 @@ public:
   void SetContextVars(
       std::unordered_map<std::string, lldb::ValueObjectSP> context_vars);
 
+  bool AllowSideEffects() const { return m_allow_side_effects; }
+
+  void SetAllowSideEffects(bool allow_side_effects) {
+    m_allow_side_effects = allow_side_effects;
+  }
+
  protected:
+   llvm::Error BailOut(ErrorCode code, const std::string &message,
+                       uint32_t loc);
    llvm::Expected<lldb::ValueObjectSP>
    DILEvalNode(const ASTNode *node, FlowAnalysis *flow = nullptr);
 
@@ -153,6 +161,9 @@ public:
    lldb::ValueObjectSP PointerAdd(lldb::ValueObjectSP lhs, int64_t offset);
    lldb::ValueObjectSP ResolveContextVar(const std::string &name) const;
 
+   llvm::Error CheckIncrementDecrement(const UnaryOpNode *node,
+                                       CompilerType rhs_type);
+
    FlowAnalysis *flow_analysis() { return m_flow_analysis_chain.back(); }
 
  private:
@@ -178,6 +189,8 @@ public:
   lldb::DynamicValueType m_default_dynamic;
 
   std::shared_ptr<StackFrame> m_exe_ctx_scope;
+
+  bool m_allow_side_effects = true;
 };
 
 }  // namespace lldb_private::dil

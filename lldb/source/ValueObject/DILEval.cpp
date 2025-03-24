@@ -1449,6 +1449,12 @@ Interpreter::Visit(const ArraySubscriptNode *node) {
   return val2;
 }
 
+static bool IsLiteralZero(lldb::ValueObjectSP &val) {
+  bool is_zero = val->GetValueAsUnsigned(-1) == 0;
+  bool is_boolean = val->GetCompilerType().IsBoolean();
+  return is_zero && !is_boolean;
+}
+
 static CompilerType GetBasicType(std::shared_ptr<ExecutionContextScope> ctx,
                                  lldb::BasicType basic_type) {
   static std::unordered_map<lldb::BasicType, CompilerType> basic_types;
@@ -1758,6 +1764,29 @@ bool IsCompAssign(BinaryOpKind kind) {
       (kind == BinaryOpKind::ShlAssign) || (kind == BinaryOpKind::ShrAssign));
 }
 
+llvm::Error Interpreter::PrepareBinaryLogical(lldb::ValueObjectSP &lhs,
+                                              lldb::ValueObjectSP &rhs,
+                                              uint32_t location,
+                                              bool is_comp_assign) {
+  auto lhs_type = lhs->GetCompilerType();
+  auto rhs_type = rhs->GetCompilerType();
+
+  if (!lhs_type.IsContextuallyConvertibleToBool()) {
+    return BailOut(
+        ErrorCode::kInvalidOperandType,
+        llvm::formatv(kValueIsNotConvertibleToBool, lhs_type.TypeDescription()),
+        location);
+  }
+  if (!rhs_type.IsContextuallyConvertibleToBool()) {
+    return BailOut(
+        ErrorCode::kInvalidOperandType,
+        llvm::formatv(kValueIsNotConvertibleToBool, rhs_type.TypeDescription()),
+        location);
+  }
+
+  return llvm::Error::success();
+}
+
 llvm::Error Interpreter::PrepareBinaryAddition(lldb::ValueObjectSP &lhs,
                                                lldb::ValueObjectSP &rhs,
                                                uint32_t location,
@@ -1828,7 +1857,6 @@ llvm::Error Interpreter::PrepareBinarySubtraction(lldb::ValueObjectSP &lhs,
   //  {scalar,unscoped_enum} <-> {scalar,unscoped_enum}
   //  pointer <-> {integer,unscoped_enum}
   //  pointer <-> pointer (if pointee types are compatible)
-
   auto orig_lhs_type = lhs->GetCompilerType();
   auto orig_rhs_type = rhs->GetCompilerType();
   auto result_type =
@@ -1878,6 +1906,188 @@ llvm::Error Interpreter::PrepareBinarySubtraction(lldb::ValueObjectSP &lhs,
                  location);
 }
 
+llvm::Error Interpreter::PrepareBinaryOpScalar(lldb::ValueObjectSP &lhs,
+                                               lldb::ValueObjectSP &rhs,
+                                               uint32_t location,
+                                               bool is_comp_assign) {
+  // Operations {'*', '/'} work for:
+  //
+  //  {scalar,unscoped_enum} <-> {scalar,unscoped_enum}
+  //
+  auto orig_lhs_type = lhs->GetCompilerType();
+  auto orig_rhs_type = rhs->GetCompilerType();
+  auto result_type =
+      ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
+
+  if (result_type.IsScalarType()) {
+    return llvm::Error::success();
+  }
+
+  // Invalid operands.
+  return BailOut(ErrorCode::kInvalidOperandType,
+                 llvm::formatv(kInvalidOperandsToBinaryExpression,
+                               orig_lhs_type.TypeDescription(),
+                               orig_rhs_type.TypeDescription()),
+                 location);
+}
+
+llvm::Error Interpreter::PrepareBinaryOpInteger(lldb::ValueObjectSP &lhs,
+                                                lldb::ValueObjectSP &rhs,
+                                                uint32_t location,
+                                                bool is_comp_assign) {
+  // Operations {'%', '&', '|', '^'} work for:
+  //
+  //  {integer,unscoped_enum} <-> {integer,unscoped_enum}
+  //
+  auto orig_lhs_type = lhs->GetCompilerType();
+  auto orig_rhs_type = rhs->GetCompilerType();
+  auto result_type =
+      ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
+
+  if (result_type.IsInteger()) {
+    return llvm::Error::success();
+  }
+
+  // Invalid operands.
+  return BailOut(ErrorCode::kInvalidOperandType,
+                 llvm::formatv(kInvalidOperandsToBinaryExpression,
+                               orig_lhs_type.TypeDescription(),
+                               orig_rhs_type.TypeDescription()),
+                 location);
+}
+
+llvm::Error Interpreter::PrepareBinaryShift(lldb::ValueObjectSP &lhs,
+                                            lldb::ValueObjectSP &rhs,
+                                            uint32_t location,
+                                            bool is_comp_assign) {
+  // Operations {'<<', '>>'} work for:
+  //
+  //  {integer,unscoped_enum} <-> {integer,unscoped_enum}
+  auto orig_lhs_type = lhs->GetCompilerType();
+  auto orig_rhs_type = rhs->GetCompilerType();
+
+  if (!is_comp_assign) {
+    lhs = UnaryConversion(lhs, m_exe_ctx_scope);
+  }
+  rhs = UnaryConversion(rhs, m_exe_ctx_scope);
+
+  if (lhs->GetCompilerType().IsInteger() &&
+      rhs->GetCompilerType().IsInteger()) {
+    return llvm::Error::success();
+  }
+
+  // Invalid operands.
+  return BailOut(ErrorCode::kInvalidOperandType,
+                 llvm::formatv(kInvalidOperandsToBinaryExpression,
+                               orig_lhs_type.TypeDescription(),
+                               orig_rhs_type.TypeDescription()),
+                 location);
+}
+
+llvm::Error Interpreter::PrepareBinaryComparison(BinaryOpKind kind,
+                                                 lldb::ValueObjectSP &lhs,
+                                                 lldb::ValueObjectSP &rhs,
+                                                 uint32_t location,
+                                                 bool is_comp_assign) {
+  // Comparison works for:
+  //
+  //  nullptr_t <-> {nullptr_t,integer} (if integer is literal zero)
+  //  {nullptr_t,integer} <-> nullptr_t (if integer is literal zero)
+  //  {scalar,unscoped_enum} <-> {scalar,unscoped_enum}
+  //  scoped_enum <-> scoped_enum (if the same type)
+  //  pointer <-> pointer (if pointee types are compatible)
+  //  pointer <-> {integer,unscoped_enum,nullptr_t}
+  //  {integer,unscoped_enum,nullptr_t} <-> pointer
+  auto orig_lhs_type = lhs->GetCompilerType();
+  auto orig_rhs_type = rhs->GetCompilerType();
+
+  bool is_ordered = (kind == BinaryOpKind::LT || kind == BinaryOpKind::LE ||
+                     kind == BinaryOpKind::GT || kind == BinaryOpKind::GE);
+
+  bool lhs_nullptr_or_zero =
+      orig_lhs_type.IsNullPtrType() || IsLiteralZero(lhs);
+  bool rhs_nullptr_or_zero =
+      orig_rhs_type.IsNullPtrType() || IsLiteralZero(rhs);
+  if (!is_ordered && ((orig_lhs_type.IsNullPtrType() && rhs_nullptr_or_zero) ||
+                      (lhs_nullptr_or_zero && orig_rhs_type.IsNullPtrType()))) {
+    return llvm::Error::success();
+  }
+
+  // If the operands has arithmetic or enumeration type (scoped or unscoped),
+  // usual arithmetic conversions are performed on both operands following the
+  // rules for arithmetic operators.
+  ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
+
+  auto lhs_type = lhs->GetCompilerType();
+  auto rhs_type = rhs->GetCompilerType();
+
+  auto boolean_ty = GetBasicType(m_exe_ctx_scope, lldb::eBasicTypeBool);
+
+  if (lhs_type.IsScalarOrUnscopedEnumerationType() &&
+      rhs_type.IsScalarOrUnscopedEnumerationType()) {
+    return llvm::Error::success();
+  }
+
+  // Scoped enums can be compared only to the instances of the same type.
+  if (lhs_type.IsScopedEnumerationType() ||
+      rhs_type.IsScopedEnumerationType()) {
+    if (lhs_type.CompareTypes(rhs_type)) {
+      return llvm::Error::success();
+    }
+    // Invalid operands.
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv(kInvalidOperandsToBinaryExpression,
+                                 orig_lhs_type.TypeDescription(),
+                                 orig_rhs_type.TypeDescription()),
+                   location);
+  }
+
+  // Check if the value can be compared to a pointer. We allow all pointers,
+  // integers, unscoped enumerations and a nullptr literal if it's an
+  // equality/inequality comparison. For "pointer <-> integer" C++ allows only
+  // equality/inequality comparison against literal zero and nullptr. However in
+  // the debugger context it's often useful to compare a pointer with an integer
+  // representing an address. That said, this also allows comparing nullptr and
+  // any integer, not just literal zero, e.g. "nullptr == 1 -> false". C++
+  // doesn't allow it, but we implement this for convenience.
+  auto comparable_to_pointer = [&](CompilerType t) {
+    return t.IsPointerType() || t.IsInteger() ||
+           t.IsUnscopedEnumerationType() || (!is_ordered && t.IsNullPtrType());
+  };
+
+  if ((lhs_type.IsPointerType() && comparable_to_pointer(rhs_type)) ||
+      (comparable_to_pointer(lhs_type) && rhs_type.IsPointerType())) {
+    // If both are pointers, check if they have comparable types.
+    if ((lhs_type.IsPointerType() && !lhs_type.IsPointerToVoid()) &&
+        (rhs_type.IsPointerType() && !rhs_type.IsPointerToVoid())) {
+      // Compare canonical unqualified pointer types.
+      CompilerType lhs_unqualified_type =
+          lhs_type.GetCanonicalType().GetFullyUnqualifiedType();
+      CompilerType rhs_unqualified_type =
+          rhs_type.GetCanonicalType().GetFullyUnqualifiedType();
+      bool comparable = lhs_unqualified_type.CompareTypes(rhs_unqualified_type);
+
+      if (!comparable) {
+        return BailOut(
+            ErrorCode::kInvalidOperandType,
+            llvm::formatv("comparison of distinct pointer types ({0} and {1})",
+                          lhs_type.TypeDescription(),
+                          rhs_type.TypeDescription()),
+            location);
+      }
+    }
+    // Comparing pointers to void is always allowed.
+    return llvm::Error::success();
+  }
+
+  // Invalid operands.
+  return BailOut(ErrorCode::kInvalidOperandType,
+                 llvm::formatv(kInvalidOperandsToBinaryExpression,
+                               orig_lhs_type.TypeDescription(),
+                               orig_rhs_type.TypeDescription()),
+                 location);
+}
+
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const BinaryOpNode *node) {
   // Short-circuit logical operators.
@@ -1888,13 +2098,18 @@ Interpreter::Visit(const BinaryOpNode *node) {
       return lhs_or_err;
     }
     lldb::ValueObjectSP lhs = *lhs_or_err;
-    if (lhs->GetCompilerType().IsReferenceType()) {
+    auto lhs_type = lhs->GetCompilerType();
+    if (lhs_type.IsReferenceType()) {
       lhs = lhs->Dereference(error);
       if (error.Fail())
         return error.ToError();
     }
-    assert(lhs->GetCompilerType().IsContextuallyConvertibleToBool() &&
-           "invalid ast: must be convertible to bool");
+    if (!lhs_type.IsContextuallyConvertibleToBool()) {
+      return BailOut(ErrorCode::kInvalidOperandType,
+                     llvm::formatv(kValueIsNotConvertibleToBool,
+                                   lhs_type.TypeDescription()),
+                     node->lhs()->GetLocation());
+    }
 
     // For "&&" break if LHS is "false", for "||" if LHS is "true".
     auto lvalue_or_err = lhs->GetValueAsBool();
@@ -1910,19 +2125,33 @@ Interpreter::Visit(const BinaryOpNode *node) {
                                                     "result");
     }
 
+    // Problem: cannot check the type of RHS without evaluating it anymore.
+    // If LHS is true, ignore rhs entirely without producing a potential error?
+    // Or evaluate both anyway to produce a correct error?
+    // LLDB produces error for RHS anyway:
+    // (lldb) expr true || s
+    //                  ˄  ˄
+    //                  │  ╰─ 'Sx' is not contextually convertible to 'bool'
+    //                  ╰─ invalid operands to binary expression
+
     // Breaking early didn't happen, evaluate the RHS and use it as a result.
     auto rhs_or_err = DILEvalNode(node->rhs());
     if (!rhs_or_err) {
       return rhs_or_err;
     }
     lldb::ValueObjectSP rhs = *rhs_or_err;
-    if (rhs->GetCompilerType().IsReferenceType()) {
+    auto rhs_type = lhs->GetCompilerType();
+    if (rhs_type.IsReferenceType()) {
       rhs = rhs->Dereference(error);
       if (error.Fail())
         return error.ToError();
     }
-    assert(rhs->GetCompilerType().IsContextuallyConvertibleToBool() &&
-           "invalid ast: must be convertible to bool");
+    if (!rhs_type.IsContextuallyConvertibleToBool()) {
+      return BailOut(ErrorCode::kInvalidOperandType,
+                     llvm::formatv(kValueIsNotConvertibleToBool,
+                                   rhs_type.TypeDescription()),
+                     node->rhs()->GetLocation());
+    }
 
     auto rvalue_or_err = rhs->GetValueAsBool();
     if (!rvalue_or_err)
@@ -1981,24 +2210,37 @@ Interpreter::Visit(const BinaryOpNode *node) {
               PrepareBinaryAddition(lhs, rhs, node->GetLocation(), false))
         return err;
       return EvaluateBinaryAddition(lhs, rhs);
-    case BinaryOpKind::Sub: {
+    case BinaryOpKind::Sub:
       if (auto err =
               PrepareBinarySubtraction(lhs, rhs, node->GetLocation(), false))
         return err;
       return EvaluateBinarySubtraction(lhs, rhs);
-    }
     case BinaryOpKind::Mul:
+      if (auto err =
+              PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), false))
+        return err;
       return EvaluateBinaryMultiplication(lhs, rhs);
     case BinaryOpKind::Div:
+      if (auto err =
+              PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), false))
+        return err;
       return EvaluateBinaryDivision(lhs, rhs, node->GetLocation());
     case BinaryOpKind::Rem:
+      if (auto err =
+              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), false))
+        return err;
       return EvaluateBinaryRemainder(lhs, rhs);
     case BinaryOpKind::And:
     case BinaryOpKind::Or:
     case BinaryOpKind::Xor:
+      if (auto err =
+              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), false))
+        return err;
       return EvaluateBinaryBitwise(node->kind(), lhs, rhs);
     case BinaryOpKind::Shl:
     case BinaryOpKind::Shr:
+      if (auto err = PrepareBinaryShift(lhs, rhs, node->GetLocation(), false))
+        return err;
       return EvaluateBinaryShift(node->kind(), lhs, rhs);
 
     // Comparison operations.
@@ -2008,6 +2250,9 @@ Interpreter::Visit(const BinaryOpNode *node) {
     case BinaryOpKind::LE:
     case BinaryOpKind::GT:
     case BinaryOpKind::GE:
+      if (auto err = PrepareBinaryComparison(node->kind(), lhs, rhs,
+                                             node->GetLocation(), false))
+        return err;
       return EvaluateComparison(node->kind(), lhs, rhs);
 
     case BinaryOpKind::Assign:
@@ -2041,8 +2286,8 @@ Interpreter::Visit(const BinaryOpNode *node) {
   return error.ToError();
 }
 
-llvm::Error Interpreter::CheckIncrementDecrement(const UnaryOpNode *node,
-                                                 CompilerType rhs_type) {
+llvm::Error Interpreter::PrepareIncrementDecrement(const UnaryOpNode *node,
+                                                   CompilerType rhs_type) {
 
   // In C++ the requirement here is that the expression is "assignable". However
   // in the debugger context side-effects are not allowed and the only case
@@ -2182,15 +2427,15 @@ Interpreter::Visit(const UnaryOpNode *node) {
                        node->GetLocation());
       return EvaluateUnaryBitwiseNot(rhs);
     case UnaryOpKind::PreInc:
-      if (llvm::Error err = CheckIncrementDecrement(node, rhs_type))
+      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
         return err;
       return EvaluateUnaryPrefixIncrement(rhs);
     case UnaryOpKind::PreDec:
-      if (llvm::Error err = CheckIncrementDecrement(node, rhs_type))
+      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
         return err;
       return EvaluateUnaryPrefixDecrement(rhs);
     case UnaryOpKind::PostInc: {
-      if (llvm::Error err = CheckIncrementDecrement(node, rhs_type))
+      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
         return err;
       // In postfix inc/dec the result is the original value.
       lldb::ValueObjectSP val2 = rhs->Clone(ConstString("cloned-object"));
@@ -2198,7 +2443,7 @@ Interpreter::Visit(const UnaryOpNode *node) {
       return val2;
     }
     case UnaryOpKind::PostDec: {
-      if (llvm::Error err = CheckIncrementDecrement(node, rhs_type))
+      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
         return err;
       // In postfix inc/dec the result is the original value.
       lldb::ValueObjectSP val2 = rhs->Clone(ConstString("cloned-object"));

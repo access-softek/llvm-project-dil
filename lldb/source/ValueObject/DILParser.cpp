@@ -3011,22 +3011,34 @@ ASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs,
 
     case BinaryOpKind::Mul:
     case BinaryOpKind::Div:
+      return std::make_unique<BinaryOpNode>(location, result_type, kind,
+                                            std::move(lhs), std::move(rhs),
+                                            comp_assign_type, nullptr);
       result_type = PrepareBinaryMulDiv(lhs, rhs,
                                         /*is_comp_assign*/ false);
       break;
 
     case BinaryOpKind::Rem:
+      return std::make_unique<BinaryOpNode>(location, result_type, kind,
+                                            std::move(lhs), std::move(rhs),
+                                            comp_assign_type, nullptr);
       result_type = PrepareBinaryRemainder(lhs, rhs, /*is_comp_assign*/ false);
       break;
 
     case BinaryOpKind::And:
     case BinaryOpKind::Or:
     case BinaryOpKind::Xor:
+      return std::make_unique<BinaryOpNode>(location, result_type, kind,
+                                            std::move(lhs), std::move(rhs),
+                                            comp_assign_type, nullptr);
       result_type = PrepareBinaryBitwise(lhs, rhs,
                                          /*is_comp_assign*/ false);
       break;
     case BinaryOpKind::Shl:
     case BinaryOpKind::Shr:
+      return std::make_unique<BinaryOpNode>(location, result_type, kind,
+                                            std::move(lhs), std::move(rhs),
+                                            comp_assign_type, nullptr);
       result_type = PrepareBinaryShift(lhs, rhs,
                                        /*is_comp_assign*/ false);
       break;
@@ -3037,11 +3049,17 @@ ASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs,
     case BinaryOpKind::LE:
     case BinaryOpKind::GT:
     case BinaryOpKind::GE:
+      return std::make_unique<BinaryOpNode>(location, result_type, kind,
+                                            std::move(lhs), std::move(rhs),
+                                            comp_assign_type, nullptr);
       result_type = PrepareBinaryComparison(kind, lhs, rhs, location);
       break;
 
     case BinaryOpKind::LAnd:
     case BinaryOpKind::LOr:
+      return std::make_unique<BinaryOpNode>(location, result_type, kind,
+                                            std::move(lhs), std::move(rhs),
+                                            comp_assign_type, nullptr);
       result_type = PrepareBinaryLogical(lhs, rhs);
       break;
 

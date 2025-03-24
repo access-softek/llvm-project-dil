@@ -159,14 +159,30 @@ public:
    lldb::ValueObjectSP PointerAdd(lldb::ValueObjectSP lhs, int64_t offset);
    lldb::ValueObjectSP ResolveContextVar(const std::string &name) const;
 
-   llvm::Error CheckIncrementDecrement(const UnaryOpNode *node,
-                                       CompilerType rhs_type);
+   llvm::Error PrepareIncrementDecrement(const UnaryOpNode *node,
+                                         CompilerType rhs_type);
+   llvm::Error PrepareBinaryLogical(lldb::ValueObjectSP &lhs,
+                                    lldb::ValueObjectSP &rhs, uint32_t location,
+                                    bool is_comp_assign);
    llvm::Error PrepareBinaryAddition(lldb::ValueObjectSP &lhs,
                                      lldb::ValueObjectSP &rhs,
                                      uint32_t location, bool is_comp_assign);
    llvm::Error PrepareBinarySubtraction(lldb::ValueObjectSP &lhs,
                                         lldb::ValueObjectSP &rhs,
                                         uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinaryOpScalar(lldb::ValueObjectSP &lhs,
+                                     lldb::ValueObjectSP &rhs,
+                                     uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinaryOpInteger(lldb::ValueObjectSP &lhs,
+                                      lldb::ValueObjectSP &rhs,
+                                      uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinaryShift(lldb::ValueObjectSP &lhs,
+                                  lldb::ValueObjectSP &rhs, uint32_t location,
+                                  bool is_comp_assign);
+   llvm::Error PrepareBinaryComparison(BinaryOpKind kind,
+                                       lldb::ValueObjectSP &lhs,
+                                       lldb::ValueObjectSP &rhs,
+                                       uint32_t location, bool is_comp_assign);
 
    FlowAnalysis *flow_analysis() { return m_flow_analysis_chain.back(); }
 

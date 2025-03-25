@@ -183,6 +183,9 @@ public:
                                        lldb::ValueObjectSP &lhs,
                                        lldb::ValueObjectSP &rhs,
                                        uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareAssignment(lldb::ValueObjectSP &lhs,
+                                 lldb::ValueObjectSP &rhs, uint32_t location);
+   llvm::Error CheckCompositeAssignment(const BinaryOpNode *node);
 
    FlowAnalysis *flow_analysis() { return m_flow_analysis_chain.back(); }
 

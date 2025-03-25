@@ -2088,8 +2088,93 @@ llvm::Error Interpreter::PrepareBinaryComparison(BinaryOpKind kind,
                  location);
 }
 
+static bool ImplicitConversionIsAllowed(CompilerType src, CompilerType dst,
+                                        bool is_src_literal_zero) {
+  if (dst.IsInteger() || dst.IsFloat()) {
+    // Arithmetic types and enumerations can be implicitly converted to integers
+    // and floating point types.
+    if (src.IsScalarOrUnscopedEnumerationType() ||
+        src.IsScopedEnumerationType()) {
+      return true;
+    }
+  }
+
+  if (dst.IsPointerType()) {
+    // Literal zero, `nullptr_t` and arrays can be implicitly converted to
+    // pointers.
+    if (is_src_literal_zero || src.IsNullPtrType()) {
+      return true;
+    }
+    if (src.IsArrayType() &&
+        src.GetArrayElementType(nullptr).CompareTypes(dst.GetPointeeType())) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+llvm::Error Interpreter::PrepareAssignment(lldb::ValueObjectSP &lhs,
+                                           lldb::ValueObjectSP &rhs,
+                                           uint32_t location) {
+  auto from_type = rhs->GetCompilerType();
+  auto to_type = lhs->GetCompilerType();
+
+  // If the expression already has the required type, nothing to do here.
+  if (from_type.CompareTypes(to_type)) {
+    return llvm::Error::success();
+  }
+
+  // Check if the implicit conversion is possible and insert a cast.
+  if (ImplicitConversionIsAllowed(from_type, to_type, IsLiteralZero(rhs))) {
+    rhs = rhs->CastToBasicType(lhs->GetCompilerType());
+    if (!rhs->GetError().Success())
+      return rhs->GetError().ToError();
+    return llvm::Error::success();
+  }
+
+  return BailOut(ErrorCode::kInvalidOperandType,
+                 llvm::formatv("no known conversion from {0} to {1}",
+                               from_type.TypeDescription(),
+                               to_type.TypeDescription()),
+                 location);
+}
+
+llvm::Error Interpreter::CheckCompositeAssignment(const BinaryOpNode *node) {
+  // In C++ the requirement here is that the expression is "assignable".
+  // However in the debugger context side-effects are not allowed and the only
+  // case where composite assignments are permitted is when modifying the
+  // "context variable".
+  // Technically, `($var += 1) += 1` could be allowed too, since both
+  // operations modify the context variable. However, MSVC debugger doesn't
+  // allow it, so we don't implement it too.
+  CompilerType bad_type;
+  if (node->lhs()->is_rvalue()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv("expression is not assignable"),
+                   node->GetLocation());
+  }
+  if (!node->lhs()->is_context_var() && !AllowSideEffects()) {
+    return BailOut(
+        ErrorCode::kInvalidOperandType,
+        llvm::formatv("side effects are not supported in this context: "
+                      "trying to modify data at the target process"),
+        node->GetLocation());
+  }
+  return llvm::Error::success();
+}
+
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const BinaryOpNode *node) {
+
+  // If we're building a composite assignment, check for composite assignments
+  // constraints: if the LHS is assignable, if the type of the binary operation
+  // can be assigned to it, etc.
+  if (IsCompAssign(node->kind())) {
+    if (auto err = CheckCompositeAssignment(node))
+      return err;
+  }
+
   // Short-circuit logical operators.
   if (node->kind() == BinaryOpKind::LAnd || node->kind() == BinaryOpKind::LOr) {
     Status error;
@@ -2173,18 +2258,6 @@ Interpreter::Visit(const BinaryOpNode *node) {
   }
   lldb::ValueObjectSP rhs = *rhs_or_err;
 
-  // If either operand is a MemberOf node, we have not yet done the correct
-  // type checking & conversions, so we need to do them now.
-  if (llvm::isa<MemberOfNode>(node->lhs()) ||
-      llvm::isa<MemberOfNode>(node->rhs())) {
-    bool is_comp_assign = IsCompAssign(node->kind());
-    if (!is_comp_assign)
-      lhs = UnaryConversion(lhs, m_exe_ctx_scope);
-    rhs = UnaryConversion(rhs, m_exe_ctx_scope);
-    if (!is_comp_assign)
-      ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
-  }
-
   // For math operations, be sure to dereference the operands.
   if ((node->kind() == BinaryOpKind::Add)
       || (node->kind() == BinaryOpKind::Sub)
@@ -2254,26 +2327,45 @@ Interpreter::Visit(const BinaryOpNode *node) {
                                              node->GetLocation(), false))
         return err;
       return EvaluateComparison(node->kind(), lhs, rhs);
-
+    // Context variables are not implemented yet,
+    // so the following operators are untested:
     case BinaryOpKind::Assign:
+      if (auto err = PrepareAssignment(lhs, rhs, node->GetLocation()))
+        return err;
       return EvaluateAssignment(lhs, rhs);
     case BinaryOpKind::AddAssign:
+      if (auto err = PrepareBinaryAddition(lhs, rhs, node->GetLocation(), true))
+        return err;
       return EvaluateBinaryAddAssign(lhs, rhs, node->GetLocation());
     case BinaryOpKind::SubAssign:
+      if (auto err =
+              PrepareBinarySubtraction(lhs, rhs, node->GetLocation(), true))
+        return err;
       return EvaluateBinarySubAssign(lhs, rhs);
     case BinaryOpKind::MulAssign:
+      if (auto err = PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), true))
+        return err;
       return EvaluateBinaryMulAssign(lhs, rhs);
     case BinaryOpKind::DivAssign:
+      if (auto err = PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), true))
+        return err;
       return EvaluateBinaryDivAssign(lhs, rhs, node->GetLocation());
     case BinaryOpKind::RemAssign:
+      if (auto err =
+              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), true))
+        return err;
       return EvaluateBinaryRemAssign(lhs, rhs);
-
     case BinaryOpKind::AndAssign:
     case BinaryOpKind::OrAssign:
     case BinaryOpKind::XorAssign:
+      if (auto err =
+              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), true))
+        return err;
       return EvaluateBinaryBitwiseAssign(node->kind(), lhs, rhs);
     case BinaryOpKind::ShlAssign:
     case BinaryOpKind::ShrAssign:
+      if (auto err = PrepareBinaryShift(lhs, rhs, node->GetLocation(), true))
+        return err;
       return EvaluateBinaryShiftAssign(node->kind(), lhs, rhs,
                                        node->comp_assign_type());
 

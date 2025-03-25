@@ -2992,6 +2992,10 @@ ASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs,
   // `int + int`.
   CompilerType comp_assign_type;
 
+  return std::make_unique<BinaryOpNode>(location, result_type, kind,
+                                        std::move(lhs), std::move(rhs),
+                                        comp_assign_type, nullptr);
+
   switch (kind) {
     case BinaryOpKind::Add:
       return std::make_unique<BinaryOpNode>(location, result_type, kind,

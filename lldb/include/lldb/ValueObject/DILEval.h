@@ -104,6 +104,34 @@ public:
    llvm::Expected<lldb::ValueObjectSP>
    Visit(const TernaryOpNode *node) override;
 
+   llvm::Error PrepareIncrementDecrement(const UnaryOpNode *node,
+                                         CompilerType rhs_type);
+   llvm::Error PrepareBinaryLogical(lldb::ValueObjectSP &lhs,
+                                    lldb::ValueObjectSP &rhs, uint32_t location,
+                                    bool is_comp_assign);
+   llvm::Error PrepareBinaryAddition(lldb::ValueObjectSP &lhs,
+                                     lldb::ValueObjectSP &rhs,
+                                     uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinarySubtraction(lldb::ValueObjectSP &lhs,
+                                        lldb::ValueObjectSP &rhs,
+                                        uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinaryOpScalar(lldb::ValueObjectSP &lhs,
+                                     lldb::ValueObjectSP &rhs,
+                                     uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinaryOpInteger(lldb::ValueObjectSP &lhs,
+                                      lldb::ValueObjectSP &rhs,
+                                      uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinaryShift(lldb::ValueObjectSP &lhs,
+                                  lldb::ValueObjectSP &rhs, uint32_t location,
+                                  bool is_comp_assign);
+   llvm::Error PrepareBinaryComparison(BinaryOpKind kind,
+                                       lldb::ValueObjectSP &lhs,
+                                       lldb::ValueObjectSP &rhs,
+                                       uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareAssignment(lldb::ValueObjectSP &lhs,
+                                 lldb::ValueObjectSP &rhs, uint32_t location);
+   llvm::Error CheckCompositeAssignment(const BinaryOpNode *node);
+
    lldb::ValueObjectSP EvaluateComparison(BinaryOpKind kind,
                                           lldb::ValueObjectSP lhs,
                                           lldb::ValueObjectSP rhs);
@@ -158,34 +186,6 @@ public:
 
    lldb::ValueObjectSP PointerAdd(lldb::ValueObjectSP lhs, int64_t offset);
    lldb::ValueObjectSP ResolveContextVar(const std::string &name) const;
-
-   llvm::Error PrepareIncrementDecrement(const UnaryOpNode *node,
-                                         CompilerType rhs_type);
-   llvm::Error PrepareBinaryLogical(lldb::ValueObjectSP &lhs,
-                                    lldb::ValueObjectSP &rhs, uint32_t location,
-                                    bool is_comp_assign);
-   llvm::Error PrepareBinaryAddition(lldb::ValueObjectSP &lhs,
-                                     lldb::ValueObjectSP &rhs,
-                                     uint32_t location, bool is_comp_assign);
-   llvm::Error PrepareBinarySubtraction(lldb::ValueObjectSP &lhs,
-                                        lldb::ValueObjectSP &rhs,
-                                        uint32_t location, bool is_comp_assign);
-   llvm::Error PrepareBinaryOpScalar(lldb::ValueObjectSP &lhs,
-                                     lldb::ValueObjectSP &rhs,
-                                     uint32_t location, bool is_comp_assign);
-   llvm::Error PrepareBinaryOpInteger(lldb::ValueObjectSP &lhs,
-                                      lldb::ValueObjectSP &rhs,
-                                      uint32_t location, bool is_comp_assign);
-   llvm::Error PrepareBinaryShift(lldb::ValueObjectSP &lhs,
-                                  lldb::ValueObjectSP &rhs, uint32_t location,
-                                  bool is_comp_assign);
-   llvm::Error PrepareBinaryComparison(BinaryOpKind kind,
-                                       lldb::ValueObjectSP &lhs,
-                                       lldb::ValueObjectSP &rhs,
-                                       uint32_t location, bool is_comp_assign);
-   llvm::Error PrepareAssignment(lldb::ValueObjectSP &lhs,
-                                 lldb::ValueObjectSP &rhs, uint32_t location);
-   llvm::Error CheckCompositeAssignment(const BinaryOpNode *node);
 
    FlowAnalysis *flow_analysis() { return m_flow_analysis_chain.back(); }
 

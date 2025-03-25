@@ -1755,13 +1755,432 @@ ArithmeticConversions(lldb::ValueObjectSP &lhs, lldb::ValueObjectSP &rhs,
   return rhs_type;
 }
 
-bool IsCompAssign(BinaryOpKind kind) {
+static bool IsCompAssign(BinaryOpKind kind) {
   return (
       (kind == BinaryOpKind::AddAssign) || (kind == BinaryOpKind::SubAssign) ||
       (kind == BinaryOpKind::MulAssign) || (kind == BinaryOpKind::DivAssign) ||
       (kind == BinaryOpKind::RemAssign) || (kind == BinaryOpKind::AndAssign) ||
       (kind == BinaryOpKind::OrAssign) || (kind == BinaryOpKind::XorAssign) ||
       (kind == BinaryOpKind::ShlAssign) || (kind == BinaryOpKind::ShrAssign));
+}
+
+llvm::Expected<lldb::ValueObjectSP>
+Interpreter::Visit(const BinaryOpNode *node) {
+
+  // If we're building a composite assignment, check for composite assignments
+  // constraints: if the LHS is assignable, if the type of the binary operation
+  // can be assigned to it, etc.
+  if (IsCompAssign(node->kind())) {
+    if (auto err = CheckCompositeAssignment(node))
+      return err;
+  }
+
+  // Short-circuit logical operators.
+  if (node->kind() == BinaryOpKind::LAnd || node->kind() == BinaryOpKind::LOr) {
+    Status error;
+    auto lhs_or_err = DILEvalNode(node->lhs());
+    if (!lhs_or_err) {
+      return lhs_or_err;
+    }
+    lldb::ValueObjectSP lhs = *lhs_or_err;
+    auto lhs_type = lhs->GetCompilerType();
+    if (lhs_type.IsReferenceType()) {
+      lhs = lhs->Dereference(error);
+      if (error.Fail())
+        return error.ToError();
+    }
+    if (!lhs_type.IsContextuallyConvertibleToBool()) {
+      return BailOut(ErrorCode::kInvalidOperandType,
+                     llvm::formatv(kValueIsNotConvertibleToBool,
+                                   lhs_type.TypeDescription()),
+                     node->lhs()->GetLocation());
+    }
+
+    // For "&&" break if LHS is "false", for "||" if LHS is "true".
+    auto lvalue_or_err = lhs->GetValueAsBool();
+    if (!lvalue_or_err)
+      return lvalue_or_err.takeError();
+
+    bool lhs_val = *lvalue_or_err;
+    bool break_early =
+        (node->kind() == BinaryOpKind::LAnd) ? !lhs_val : lhs_val;
+
+    if (break_early) {
+      return ValueObject::CreateValueObjectFromBool(m_target, lhs_val,
+                                                    "result");
+    }
+
+    // Problem: cannot check the type of RHS without evaluating it anymore.
+    // If LHS is true, ignore rhs entirely without producing a potential error?
+    // Or evaluate both anyway to produce a correct error?
+    // LLDB produces error for RHS anyway:
+    // (lldb) expr true || s
+    //                  ˄  ˄
+    //                  │  ╰─ 'Sx' is not contextually convertible to 'bool'
+    //                  ╰─ invalid operands to binary expression
+
+    // Breaking early didn't happen, evaluate the RHS and use it as a result.
+    auto rhs_or_err = DILEvalNode(node->rhs());
+    if (!rhs_or_err) {
+      return rhs_or_err;
+    }
+    lldb::ValueObjectSP rhs = *rhs_or_err;
+    auto rhs_type = lhs->GetCompilerType();
+    if (rhs_type.IsReferenceType()) {
+      rhs = rhs->Dereference(error);
+      if (error.Fail())
+        return error.ToError();
+    }
+    if (!rhs_type.IsContextuallyConvertibleToBool()) {
+      return BailOut(ErrorCode::kInvalidOperandType,
+                     llvm::formatv(kValueIsNotConvertibleToBool,
+                                   rhs_type.TypeDescription()),
+                     node->rhs()->GetLocation());
+    }
+
+    auto rvalue_or_err = rhs->GetValueAsBool();
+    if (!rvalue_or_err)
+      return rvalue_or_err.takeError();
+
+    return ValueObject::CreateValueObjectFromBool(m_target, *rvalue_or_err,
+                                                  "result");
+  }
+
+  // All other binary operations require evaluating both operands.
+  auto lhs_or_err = DILEvalNode(node->lhs());
+  if (!lhs_or_err) {
+    return lhs_or_err;
+  }
+  lldb::ValueObjectSP lhs = *lhs_or_err;
+  auto rhs_or_err = DILEvalNode(node->rhs());
+  if (!rhs_or_err) {
+    return rhs_or_err;
+  }
+  lldb::ValueObjectSP rhs = *rhs_or_err;
+
+  // For math operations, be sure to dereference the operands.
+  if ((node->kind() == BinaryOpKind::Add)
+      || (node->kind() == BinaryOpKind::Sub)
+      || (node->kind() == BinaryOpKind::Mul)
+      || (node->kind() == BinaryOpKind::Div)
+      || (node->kind() == BinaryOpKind::Rem)) {
+    Status error;
+    if (lhs->GetCompilerType().IsReferenceType()) {
+      lhs = lhs->Dereference(error);
+      if (error.Fail())
+        return error.ToError();
+    }
+    if (rhs->GetCompilerType().IsReferenceType()) {
+      rhs = rhs->Dereference(error);
+      if (error.Fail())
+        return error.ToError();
+    }
+  }
+
+  switch (node->kind()) {
+    case BinaryOpKind::Add:
+      if (auto err =
+              PrepareBinaryAddition(lhs, rhs, node->GetLocation(), false))
+        return err;
+      return EvaluateBinaryAddition(lhs, rhs);
+    case BinaryOpKind::Sub:
+      if (auto err =
+              PrepareBinarySubtraction(lhs, rhs, node->GetLocation(), false))
+        return err;
+      return EvaluateBinarySubtraction(lhs, rhs);
+    case BinaryOpKind::Mul:
+      if (auto err =
+              PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), false))
+        return err;
+      return EvaluateBinaryMultiplication(lhs, rhs);
+    case BinaryOpKind::Div:
+      if (auto err =
+              PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), false))
+        return err;
+      return EvaluateBinaryDivision(lhs, rhs, node->GetLocation());
+    case BinaryOpKind::Rem:
+      if (auto err =
+              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), false))
+        return err;
+      return EvaluateBinaryRemainder(lhs, rhs);
+    case BinaryOpKind::And:
+    case BinaryOpKind::Or:
+    case BinaryOpKind::Xor:
+      if (auto err =
+              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), false))
+        return err;
+      return EvaluateBinaryBitwise(node->kind(), lhs, rhs);
+    case BinaryOpKind::Shl:
+    case BinaryOpKind::Shr:
+      if (auto err = PrepareBinaryShift(lhs, rhs, node->GetLocation(), false))
+        return err;
+      return EvaluateBinaryShift(node->kind(), lhs, rhs);
+
+    // Comparison operations.
+    case BinaryOpKind::EQ:
+    case BinaryOpKind::NE:
+    case BinaryOpKind::LT:
+    case BinaryOpKind::LE:
+    case BinaryOpKind::GT:
+    case BinaryOpKind::GE:
+      if (auto err = PrepareBinaryComparison(node->kind(), lhs, rhs,
+                                             node->GetLocation(), false))
+        return err;
+      return EvaluateComparison(node->kind(), lhs, rhs);
+    // Context variables are not implemented yet,
+    // so the following operators are untested:
+    case BinaryOpKind::Assign:
+      if (auto err = PrepareAssignment(lhs, rhs, node->GetLocation()))
+        return err;
+      return EvaluateAssignment(lhs, rhs);
+    case BinaryOpKind::AddAssign:
+      if (auto err = PrepareBinaryAddition(lhs, rhs, node->GetLocation(), true))
+        return err;
+      return EvaluateBinaryAddAssign(lhs, rhs, node->GetLocation());
+    case BinaryOpKind::SubAssign:
+      if (auto err =
+              PrepareBinarySubtraction(lhs, rhs, node->GetLocation(), true))
+        return err;
+      return EvaluateBinarySubAssign(lhs, rhs);
+    case BinaryOpKind::MulAssign:
+      if (auto err = PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), true))
+        return err;
+      return EvaluateBinaryMulAssign(lhs, rhs);
+    case BinaryOpKind::DivAssign:
+      if (auto err = PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), true))
+        return err;
+      return EvaluateBinaryDivAssign(lhs, rhs, node->GetLocation());
+    case BinaryOpKind::RemAssign:
+      if (auto err =
+              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), true))
+        return err;
+      return EvaluateBinaryRemAssign(lhs, rhs);
+    case BinaryOpKind::AndAssign:
+    case BinaryOpKind::OrAssign:
+    case BinaryOpKind::XorAssign:
+      if (auto err =
+              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), true))
+        return err;
+      return EvaluateBinaryBitwiseAssign(node->kind(), lhs, rhs);
+    case BinaryOpKind::ShlAssign:
+    case BinaryOpKind::ShrAssign:
+      if (auto err = PrepareBinaryShift(lhs, rhs, node->GetLocation(), true))
+        return err;
+      return EvaluateBinaryShiftAssign(node->kind(), lhs, rhs,
+                                       node->comp_assign_type());
+
+    default:
+      break;
+  }
+
+  // Unsupported/invalid operation.
+  Status error("invalid ast: unexpected binary operator");
+  return error.ToError();
+}
+
+llvm::Expected<lldb::ValueObjectSP>
+Interpreter::Visit(const UnaryOpNode *node) {
+  FlowAnalysis rhs_flow(
+      /* address_of_is_pending */ node->kind() == UnaryOpKind::AddrOf);
+
+  Status error;
+  auto rhs_or_err = DILEvalNode(node->rhs(), &rhs_flow);
+  if (!rhs_or_err) {
+    return rhs_or_err;
+  }
+  lldb::ValueObjectSP rhs = *rhs_or_err;
+
+  if (rhs->GetCompilerType().IsReferenceType()) {
+    rhs = rhs->Dereference(error);
+    if (error.Fail())
+      return error.ToError();
+  }
+  CompilerType rhs_type = rhs->GetCompilerType();
+
+  switch (node->kind()) {
+    case UnaryOpKind::Deref: {
+      if (rhs_type.IsArrayType()) {
+        rhs = ArrayToPointerConversion(rhs, m_exe_ctx_scope);
+      }
+
+      lldb::ValueObjectSP dynamic_rhs = rhs->GetDynamicValue(m_default_dynamic);
+      if (dynamic_rhs)
+        rhs = dynamic_rhs;
+
+      if (rhs->GetCompilerType().IsPointerType())
+        return EvaluateDereference(rhs);
+      lldb::ValueObjectSP child_sp = rhs->Dereference(error);
+      if (error.Success())
+        rhs = child_sp;
+
+      return rhs;
+    }
+    case UnaryOpKind::AddrOf: {
+      if (node->rhs()->is_rvalue()) {
+        return BailOut(
+            ErrorCode::kInvalidOperandType,
+            llvm::formatv("cannot take the address of an rvalue of type {0}",
+                          rhs_type.TypeDescription()),
+            node->GetLocation());
+      }
+      if (rhs->IsBitfield()) {
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       "address of bit-field requested", node->GetLocation());
+      }
+      // If the address-of operation wasn't cancelled during the evaluation of
+      // RHS (e.g. because of the address-of-a-dereference elision), apply it
+      // here.
+      if (rhs_flow.AddressOfIsPending()) {
+        Status error;
+        lldb::ValueObjectSP value = rhs->AddressOf(error);
+        if (error.Fail())
+          return error.ToError();
+        return value;
+      }
+      return rhs;
+    }
+    case UnaryOpKind::Plus:
+      rhs = UnaryConversion(rhs, m_exe_ctx_scope);
+      rhs_type = rhs->GetCompilerType();
+      if (!rhs_type.IsScalarType() &&
+          // Unary plus is allowed for pointers.
+          !rhs_type.IsPointerType()) {
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       llvm::formatv(kInvalidOperandsToUnaryExpression,
+                                     rhs_type.TypeDescription()),
+                       node->GetLocation());
+      }
+      return rhs;
+    case UnaryOpKind::Minus:
+      rhs = UnaryConversion(rhs, m_exe_ctx_scope);
+      rhs_type = rhs->GetCompilerType();
+      if (!rhs_type.IsScalarType())
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       llvm::formatv(kInvalidOperandsToUnaryExpression,
+                                     rhs_type.TypeDescription()),
+                       node->GetLocation());
+      return EvaluateUnaryMinus(rhs);
+    case UnaryOpKind::LNot:
+      if (!rhs_type.IsContextuallyConvertibleToBool())
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       llvm::formatv(kInvalidOperandsToUnaryExpression,
+                                     rhs_type.TypeDescription()),
+                       node->GetLocation());
+      return EvaluateUnaryNegation(rhs);
+    case UnaryOpKind::Not:
+      rhs = UnaryConversion(rhs, m_exe_ctx_scope);
+      rhs_type = rhs->GetCompilerType();
+      if (!rhs_type.IsInteger())
+        return BailOut(ErrorCode::kInvalidOperandType,
+                       llvm::formatv(kInvalidOperandsToUnaryExpression,
+                                     rhs_type.TypeDescription()),
+                       node->GetLocation());
+      return EvaluateUnaryBitwiseNot(rhs);
+    case UnaryOpKind::PreInc:
+      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
+        return err;
+      return EvaluateUnaryPrefixIncrement(rhs);
+    case UnaryOpKind::PreDec:
+      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
+        return err;
+      return EvaluateUnaryPrefixDecrement(rhs);
+    case UnaryOpKind::PostInc: {
+      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
+        return err;
+      // In postfix inc/dec the result is the original value.
+      lldb::ValueObjectSP val2 = rhs->Clone(ConstString("cloned-object"));
+      EvaluateUnaryPrefixIncrement(rhs);
+      return val2;
+    }
+    case UnaryOpKind::PostDec: {
+      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
+        return err;
+      // In postfix inc/dec the result is the original value.
+      lldb::ValueObjectSP val2 = rhs->Clone(ConstString("cloned-object"));
+      EvaluateUnaryPrefixDecrement(rhs);
+      return val2;
+    }
+  }
+
+  // Unsupported/invalid operation.
+  Status error2("invalid ast: unexpected binary operator");
+  return error2.ToError();
+}
+
+llvm::Expected<lldb::ValueObjectSP>
+Interpreter::Visit(const TernaryOpNode *node) {
+  auto cond_or_err = DILEvalNode(node->cond());
+  if (!cond_or_err) {
+    return cond_or_err;
+  }
+  lldb::ValueObjectSP cond = *cond_or_err;
+  assert(cond->GetCompilerType().IsContextuallyConvertibleToBool() &&
+         "invalid ast: must be convertible to bool");
+
+  // Pass down the flow analysis because the conditional operator is a "flow
+  // control" construct -- LHS/RHS might be lvalues and eligible for some
+  // optimizations (e.g. "&*" elision).
+  auto value_or_err = cond->GetValueAsBool();
+  if (value_or_err) {
+    if (*value_or_err) {
+      auto lhs_or_err = DILEvalNode(node->lhs(), flow_analysis());
+      if (!lhs_or_err)
+        return lhs_or_err;
+      lldb::ValueObjectSP lhs = *lhs_or_err;
+      if (llvm::isa<MemberOfNode>(node->lhs()))
+        lhs = UnaryConversion(lhs, m_exe_ctx_scope);
+      return lhs;
+    }
+
+    auto rhs_or_err = DILEvalNode(node->rhs(), flow_analysis());
+    if (!rhs_or_err)
+      return rhs_or_err;
+    lldb::ValueObjectSP rhs = *rhs_or_err;
+    return rhs;
+  }
+  return value_or_err.takeError();
+}
+
+llvm::Error Interpreter::PrepareIncrementDecrement(const UnaryOpNode *node,
+                                                   CompilerType rhs_type) {
+
+  // In C++ the requirement here is that the expression is "assignable". However
+  // in the debugger context side-effects are not allowed and the only case
+  // where increment/decrement are permitted is when modifying the "context
+  // variable".
+  // Technically, `++(++$var)` could be allowed too, since both increments
+  // modify the context variable. However, MSVC debugger doesn't allow it, so we
+  // don't implement it too.
+  if (node->rhs()->is_rvalue()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv("expression is not assignable"),
+                   node->GetLocation());
+  }
+  if (!node->rhs()->is_context_var() && !AllowSideEffects()) {
+    return BailOut(
+        ErrorCode::kInvalidOperandType,
+        llvm::formatv("side effects are not supported in this context: "
+                      "trying to modify data at the target process"),
+        node->GetLocation());
+  }
+  auto kind = node->kind();
+  llvm::StringRef op_name =
+      (kind == UnaryOpKind::PreInc || kind == UnaryOpKind::PostInc)
+          ? "increment"
+          : "decrement";
+  if (rhs_type.IsEnumerationType()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv("cannot {0} expression of enum type '{1}'",
+                                 op_name, rhs_type.GetTypeName()),
+                   node->GetLocation());
+  }
+  if (!rhs_type.IsScalarType() && !rhs_type.IsPointerType()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv("cannot {0} value of type '{1}'", op_name,
+                                 rhs_type.GetTypeName()),
+                   node->GetLocation());
+  }
+  return llvm::Error::success();
 }
 
 llvm::Error Interpreter::PrepareBinaryLogical(lldb::ValueObjectSP &lhs,
@@ -2162,425 +2581,6 @@ llvm::Error Interpreter::CheckCompositeAssignment(const BinaryOpNode *node) {
         node->GetLocation());
   }
   return llvm::Error::success();
-}
-
-llvm::Expected<lldb::ValueObjectSP>
-Interpreter::Visit(const BinaryOpNode *node) {
-
-  // If we're building a composite assignment, check for composite assignments
-  // constraints: if the LHS is assignable, if the type of the binary operation
-  // can be assigned to it, etc.
-  if (IsCompAssign(node->kind())) {
-    if (auto err = CheckCompositeAssignment(node))
-      return err;
-  }
-
-  // Short-circuit logical operators.
-  if (node->kind() == BinaryOpKind::LAnd || node->kind() == BinaryOpKind::LOr) {
-    Status error;
-    auto lhs_or_err = DILEvalNode(node->lhs());
-    if (!lhs_or_err) {
-      return lhs_or_err;
-    }
-    lldb::ValueObjectSP lhs = *lhs_or_err;
-    auto lhs_type = lhs->GetCompilerType();
-    if (lhs_type.IsReferenceType()) {
-      lhs = lhs->Dereference(error);
-      if (error.Fail())
-        return error.ToError();
-    }
-    if (!lhs_type.IsContextuallyConvertibleToBool()) {
-      return BailOut(ErrorCode::kInvalidOperandType,
-                     llvm::formatv(kValueIsNotConvertibleToBool,
-                                   lhs_type.TypeDescription()),
-                     node->lhs()->GetLocation());
-    }
-
-    // For "&&" break if LHS is "false", for "||" if LHS is "true".
-    auto lvalue_or_err = lhs->GetValueAsBool();
-    if (!lvalue_or_err)
-      return lvalue_or_err.takeError();
-
-    bool lhs_val = *lvalue_or_err;
-    bool break_early =
-        (node->kind() == BinaryOpKind::LAnd) ? !lhs_val : lhs_val;
-
-    if (break_early) {
-      return ValueObject::CreateValueObjectFromBool(m_target, lhs_val,
-                                                    "result");
-    }
-
-    // Problem: cannot check the type of RHS without evaluating it anymore.
-    // If LHS is true, ignore rhs entirely without producing a potential error?
-    // Or evaluate both anyway to produce a correct error?
-    // LLDB produces error for RHS anyway:
-    // (lldb) expr true || s
-    //                  ˄  ˄
-    //                  │  ╰─ 'Sx' is not contextually convertible to 'bool'
-    //                  ╰─ invalid operands to binary expression
-
-    // Breaking early didn't happen, evaluate the RHS and use it as a result.
-    auto rhs_or_err = DILEvalNode(node->rhs());
-    if (!rhs_or_err) {
-      return rhs_or_err;
-    }
-    lldb::ValueObjectSP rhs = *rhs_or_err;
-    auto rhs_type = lhs->GetCompilerType();
-    if (rhs_type.IsReferenceType()) {
-      rhs = rhs->Dereference(error);
-      if (error.Fail())
-        return error.ToError();
-    }
-    if (!rhs_type.IsContextuallyConvertibleToBool()) {
-      return BailOut(ErrorCode::kInvalidOperandType,
-                     llvm::formatv(kValueIsNotConvertibleToBool,
-                                   rhs_type.TypeDescription()),
-                     node->rhs()->GetLocation());
-    }
-
-    auto rvalue_or_err = rhs->GetValueAsBool();
-    if (!rvalue_or_err)
-      return rvalue_or_err.takeError();
-
-    return ValueObject::CreateValueObjectFromBool(m_target, *rvalue_or_err,
-                                                  "result");
-  }
-
-  // All other binary operations require evaluating both operands.
-  auto lhs_or_err = DILEvalNode(node->lhs());
-  if (!lhs_or_err) {
-    return lhs_or_err;
-  }
-  lldb::ValueObjectSP lhs = *lhs_or_err;
-  auto rhs_or_err = DILEvalNode(node->rhs());
-  if (!rhs_or_err) {
-    return rhs_or_err;
-  }
-  lldb::ValueObjectSP rhs = *rhs_or_err;
-
-  // For math operations, be sure to dereference the operands.
-  if ((node->kind() == BinaryOpKind::Add)
-      || (node->kind() == BinaryOpKind::Sub)
-      || (node->kind() == BinaryOpKind::Mul)
-      || (node->kind() == BinaryOpKind::Div)
-      || (node->kind() == BinaryOpKind::Rem)) {
-    Status error;
-    if (lhs->GetCompilerType().IsReferenceType()) {
-      lhs = lhs->Dereference(error);
-      if (error.Fail())
-        return error.ToError();
-    }
-    if (rhs->GetCompilerType().IsReferenceType()) {
-      rhs = rhs->Dereference(error);
-      if (error.Fail())
-        return error.ToError();
-    }
-  }
-
-  switch (node->kind()) {
-    case BinaryOpKind::Add:
-      if (auto err =
-              PrepareBinaryAddition(lhs, rhs, node->GetLocation(), false))
-        return err;
-      return EvaluateBinaryAddition(lhs, rhs);
-    case BinaryOpKind::Sub:
-      if (auto err =
-              PrepareBinarySubtraction(lhs, rhs, node->GetLocation(), false))
-        return err;
-      return EvaluateBinarySubtraction(lhs, rhs);
-    case BinaryOpKind::Mul:
-      if (auto err =
-              PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), false))
-        return err;
-      return EvaluateBinaryMultiplication(lhs, rhs);
-    case BinaryOpKind::Div:
-      if (auto err =
-              PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), false))
-        return err;
-      return EvaluateBinaryDivision(lhs, rhs, node->GetLocation());
-    case BinaryOpKind::Rem:
-      if (auto err =
-              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), false))
-        return err;
-      return EvaluateBinaryRemainder(lhs, rhs);
-    case BinaryOpKind::And:
-    case BinaryOpKind::Or:
-    case BinaryOpKind::Xor:
-      if (auto err =
-              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), false))
-        return err;
-      return EvaluateBinaryBitwise(node->kind(), lhs, rhs);
-    case BinaryOpKind::Shl:
-    case BinaryOpKind::Shr:
-      if (auto err = PrepareBinaryShift(lhs, rhs, node->GetLocation(), false))
-        return err;
-      return EvaluateBinaryShift(node->kind(), lhs, rhs);
-
-    // Comparison operations.
-    case BinaryOpKind::EQ:
-    case BinaryOpKind::NE:
-    case BinaryOpKind::LT:
-    case BinaryOpKind::LE:
-    case BinaryOpKind::GT:
-    case BinaryOpKind::GE:
-      if (auto err = PrepareBinaryComparison(node->kind(), lhs, rhs,
-                                             node->GetLocation(), false))
-        return err;
-      return EvaluateComparison(node->kind(), lhs, rhs);
-    // Context variables are not implemented yet,
-    // so the following operators are untested:
-    case BinaryOpKind::Assign:
-      if (auto err = PrepareAssignment(lhs, rhs, node->GetLocation()))
-        return err;
-      return EvaluateAssignment(lhs, rhs);
-    case BinaryOpKind::AddAssign:
-      if (auto err = PrepareBinaryAddition(lhs, rhs, node->GetLocation(), true))
-        return err;
-      return EvaluateBinaryAddAssign(lhs, rhs, node->GetLocation());
-    case BinaryOpKind::SubAssign:
-      if (auto err =
-              PrepareBinarySubtraction(lhs, rhs, node->GetLocation(), true))
-        return err;
-      return EvaluateBinarySubAssign(lhs, rhs);
-    case BinaryOpKind::MulAssign:
-      if (auto err = PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), true))
-        return err;
-      return EvaluateBinaryMulAssign(lhs, rhs);
-    case BinaryOpKind::DivAssign:
-      if (auto err = PrepareBinaryOpScalar(lhs, rhs, node->GetLocation(), true))
-        return err;
-      return EvaluateBinaryDivAssign(lhs, rhs, node->GetLocation());
-    case BinaryOpKind::RemAssign:
-      if (auto err =
-              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), true))
-        return err;
-      return EvaluateBinaryRemAssign(lhs, rhs);
-    case BinaryOpKind::AndAssign:
-    case BinaryOpKind::OrAssign:
-    case BinaryOpKind::XorAssign:
-      if (auto err =
-              PrepareBinaryOpInteger(lhs, rhs, node->GetLocation(), true))
-        return err;
-      return EvaluateBinaryBitwiseAssign(node->kind(), lhs, rhs);
-    case BinaryOpKind::ShlAssign:
-    case BinaryOpKind::ShrAssign:
-      if (auto err = PrepareBinaryShift(lhs, rhs, node->GetLocation(), true))
-        return err;
-      return EvaluateBinaryShiftAssign(node->kind(), lhs, rhs,
-                                       node->comp_assign_type());
-
-    default:
-      break;
-  }
-
-  // Unsupported/invalid operation.
-  Status error("invalid ast: unexpected binary operator");
-  return error.ToError();
-}
-
-llvm::Error Interpreter::PrepareIncrementDecrement(const UnaryOpNode *node,
-                                                   CompilerType rhs_type) {
-
-  // In C++ the requirement here is that the expression is "assignable". However
-  // in the debugger context side-effects are not allowed and the only case
-  // where increment/decrement are permitted is when modifying the "context
-  // variable".
-  // Technically, `++(++$var)` could be allowed too, since both increments
-  // modify the context variable. However, MSVC debugger doesn't allow it, so we
-  // don't implement it too.
-  if (node->rhs()->is_rvalue()) {
-    return BailOut(ErrorCode::kInvalidOperandType,
-                   llvm::formatv("expression is not assignable"),
-                   node->GetLocation());
-  }
-  if (!node->rhs()->is_context_var() && !AllowSideEffects()) {
-    return BailOut(
-        ErrorCode::kInvalidOperandType,
-        llvm::formatv("side effects are not supported in this context: "
-                      "trying to modify data at the target process"),
-        node->GetLocation());
-  }
-  auto kind = node->kind();
-  llvm::StringRef op_name =
-      (kind == UnaryOpKind::PreInc || kind == UnaryOpKind::PostInc)
-          ? "increment"
-          : "decrement";
-  if (rhs_type.IsEnumerationType()) {
-    return BailOut(ErrorCode::kInvalidOperandType,
-                   llvm::formatv("cannot {0} expression of enum type '{1}'",
-                                 op_name, rhs_type.GetTypeName()),
-                   node->GetLocation());
-  }
-  if (!rhs_type.IsScalarType() && !rhs_type.IsPointerType()) {
-    return BailOut(ErrorCode::kInvalidOperandType,
-                   llvm::formatv("cannot {0} value of type '{1}'", op_name,
-                                 rhs_type.GetTypeName()),
-                   node->GetLocation());
-  }
-  return llvm::Error::success();
-}
-
-llvm::Expected<lldb::ValueObjectSP>
-Interpreter::Visit(const UnaryOpNode *node) {
-  FlowAnalysis rhs_flow(
-      /* address_of_is_pending */ node->kind() == UnaryOpKind::AddrOf);
-
-  Status error;
-  auto rhs_or_err = DILEvalNode(node->rhs(), &rhs_flow);
-  if (!rhs_or_err) {
-    return rhs_or_err;
-  }
-  lldb::ValueObjectSP rhs = *rhs_or_err;
-
-  if (rhs->GetCompilerType().IsReferenceType()) {
-    rhs = rhs->Dereference(error);
-    if (error.Fail())
-      return error.ToError();
-  }
-  CompilerType rhs_type = rhs->GetCompilerType();
-
-  switch (node->kind()) {
-    case UnaryOpKind::Deref: {
-      if (rhs_type.IsArrayType()) {
-        rhs = ArrayToPointerConversion(rhs, m_exe_ctx_scope);
-      }
-
-      lldb::ValueObjectSP dynamic_rhs = rhs->GetDynamicValue(m_default_dynamic);
-      if (dynamic_rhs)
-        rhs = dynamic_rhs;
-
-      if (rhs->GetCompilerType().IsPointerType())
-        return EvaluateDereference(rhs);
-      lldb::ValueObjectSP child_sp = rhs->Dereference(error);
-      if (error.Success())
-        rhs = child_sp;
-
-      return rhs;
-    }
-    case UnaryOpKind::AddrOf: {
-      if (node->rhs()->is_rvalue()) {
-        return BailOut(
-            ErrorCode::kInvalidOperandType,
-            llvm::formatv("cannot take the address of an rvalue of type {0}",
-                          rhs_type.TypeDescription()),
-            node->GetLocation());
-      }
-      if (rhs->IsBitfield()) {
-        return BailOut(ErrorCode::kInvalidOperandType,
-                       "address of bit-field requested", node->GetLocation());
-      }
-      // If the address-of operation wasn't cancelled during the evaluation of
-      // RHS (e.g. because of the address-of-a-dereference elision), apply it
-      // here.
-      if (rhs_flow.AddressOfIsPending()) {
-        Status error;
-        lldb::ValueObjectSP value = rhs->AddressOf(error);
-        if (error.Fail())
-          return error.ToError();
-        return value;
-      }
-      return rhs;
-    }
-    case UnaryOpKind::Plus:
-      rhs = UnaryConversion(rhs, m_exe_ctx_scope);
-      rhs_type = rhs->GetCompilerType();
-      if (!rhs_type.IsScalarType() &&
-          // Unary plus is allowed for pointers.
-          !rhs_type.IsPointerType()) {
-        return BailOut(ErrorCode::kInvalidOperandType,
-                       llvm::formatv(kInvalidOperandsToUnaryExpression,
-                                     rhs_type.TypeDescription()),
-                       node->GetLocation());
-      }
-      return rhs;
-    case UnaryOpKind::Minus:
-      rhs = UnaryConversion(rhs, m_exe_ctx_scope);
-      rhs_type = rhs->GetCompilerType();
-      if (!rhs_type.IsScalarType())
-        return BailOut(ErrorCode::kInvalidOperandType,
-                       llvm::formatv(kInvalidOperandsToUnaryExpression,
-                                     rhs_type.TypeDescription()),
-                       node->GetLocation());
-      return EvaluateUnaryMinus(rhs);
-    case UnaryOpKind::LNot:
-      if (!rhs_type.IsContextuallyConvertibleToBool())
-        return BailOut(ErrorCode::kInvalidOperandType,
-                       llvm::formatv(kInvalidOperandsToUnaryExpression,
-                                     rhs_type.TypeDescription()),
-                       node->GetLocation());
-      return EvaluateUnaryNegation(rhs);
-    case UnaryOpKind::Not:
-      rhs = UnaryConversion(rhs, m_exe_ctx_scope);
-      rhs_type = rhs->GetCompilerType();
-      if (!rhs_type.IsInteger())
-        return BailOut(ErrorCode::kInvalidOperandType,
-                       llvm::formatv(kInvalidOperandsToUnaryExpression,
-                                     rhs_type.TypeDescription()),
-                       node->GetLocation());
-      return EvaluateUnaryBitwiseNot(rhs);
-    case UnaryOpKind::PreInc:
-      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
-        return err;
-      return EvaluateUnaryPrefixIncrement(rhs);
-    case UnaryOpKind::PreDec:
-      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
-        return err;
-      return EvaluateUnaryPrefixDecrement(rhs);
-    case UnaryOpKind::PostInc: {
-      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
-        return err;
-      // In postfix inc/dec the result is the original value.
-      lldb::ValueObjectSP val2 = rhs->Clone(ConstString("cloned-object"));
-      EvaluateUnaryPrefixIncrement(rhs);
-      return val2;
-    }
-    case UnaryOpKind::PostDec: {
-      if (llvm::Error err = PrepareIncrementDecrement(node, rhs_type))
-        return err;
-      // In postfix inc/dec the result is the original value.
-      lldb::ValueObjectSP val2 = rhs->Clone(ConstString("cloned-object"));
-      EvaluateUnaryPrefixDecrement(rhs);
-      return val2;
-    }
-  }
-
-  // Unsupported/invalid operation.
-  Status error2("invalid ast: unexpected binary operator");
-  return error2.ToError();
-}
-
-llvm::Expected<lldb::ValueObjectSP>
-Interpreter::Visit(const TernaryOpNode *node) {
-  auto cond_or_err = DILEvalNode(node->cond());
-  if (!cond_or_err) {
-    return cond_or_err;
-  }
-  lldb::ValueObjectSP cond = *cond_or_err;
-  assert(cond->GetCompilerType().IsContextuallyConvertibleToBool() &&
-         "invalid ast: must be convertible to bool");
-
-  // Pass down the flow analysis because the conditional operator is a "flow
-  // control" construct -- LHS/RHS might be lvalues and eligible for some
-  // optimizations (e.g. "&*" elision).
-  auto value_or_err = cond->GetValueAsBool();
-  if (value_or_err) {
-    if (*value_or_err) {
-      auto lhs_or_err = DILEvalNode(node->lhs(), flow_analysis());
-      if (!lhs_or_err)
-        return lhs_or_err;
-      lldb::ValueObjectSP lhs = *lhs_or_err;
-      if (llvm::isa<MemberOfNode>(node->lhs()))
-        lhs = UnaryConversion(lhs, m_exe_ctx_scope);
-      return lhs;
-    }
-
-    auto rhs_or_err = DILEvalNode(node->rhs(), flow_analysis());
-    if (!rhs_or_err)
-      return rhs_or_err;
-    lldb::ValueObjectSP rhs = *rhs_or_err;
-    return rhs;
-  }
-  return value_or_err.takeError();
 }
 
 lldb::ValueObjectSP Interpreter::EvaluateComparison(BinaryOpKind kind,

@@ -132,47 +132,6 @@ CompilerType
 ResolveTypeByName(const std::string &name,
                   std::shared_ptr<ExecutionContextScope> ctx_scope);
 
-/// Class used to store & manipulate information about identifiers.
-class IdentifierInfo {
-public:
-  enum class Kind {
-    eValue,
-    eContextArg,
-    eMemberPath,
-  };
-
-  static std::unique_ptr<IdentifierInfo> FromValue(ValueObject &valobj) {
-    CompilerType type;
-    type = valobj.GetCompilerType();
-    return std::unique_ptr<IdentifierInfo>(
-        new IdentifierInfo(Kind::eValue, type, valobj.GetSP(), {}));
-  }
-
-  static std::unique_ptr<IdentifierInfo>
-  FromMemberPath(CompilerType type, std::vector<uint32_t> path) {
-    lldb::ValueObjectSP empty_value;
-    return std::unique_ptr<IdentifierInfo>(new IdentifierInfo(
-        Kind::eMemberPath, type, empty_value, std::move(path)));
-  }
-
-  Kind GetKind() const { return m_kind; }
-  lldb::ValueObjectSP GetValue() const { return m_value; }
-  const std::vector<uint32_t> &GetPath() const { return m_path; }
-
-  bool IsValid() const { return m_type.IsValid(); }
-
-  IdentifierInfo(Kind kind, CompilerType type, lldb::ValueObjectSP value,
-                 std::vector<uint32_t> path)
-      : m_kind(kind), m_type(type), m_value(std::move(value)),
-        m_path(std::move(path)) {}
-
-private:
-  Kind m_kind;
-  CompilerType m_type;
-  lldb::ValueObjectSP m_value;
-  std::vector<uint32_t> m_path;
-};
-
 /// Forward declaration, for use in DIL AST nodes. Definition is at the very
 /// end of this file.
 class Visitor;
@@ -281,25 +240,22 @@ class IdentifierNode : public ASTNode {
 public:
   IdentifierNode(uint32_t location, std::string name,
                  lldb::DynamicValueType use_dynamic,
-                 std::unique_ptr<IdentifierInfo> identifier, bool is_rvalue,
+                 lldb::ValueObjectSP id_valobj, bool is_rvalue,
                  bool is_context_var)
       : ASTNode(location, NodeKind::eIdentifierNode), m_is_rvalue(is_rvalue),
         m_is_context_var(is_context_var), m_name(std::move(name)),
-        m_identifier(std::move(identifier)), m_use_dynamic(use_dynamic) {}
+        m_use_dynamic(use_dynamic), m_id_valobj(std::move(id_valobj)) {}
 
   llvm::Expected<lldb::ValueObjectSP> Accept(Visitor *v) const override;
   bool is_rvalue() const override { return m_is_rvalue; }
   bool is_context_var() const override { return m_is_context_var; };
   CompilerType result_type() const override {
-    return m_identifier->GetValue()->GetCompilerType();
+    return m_id_valobj->GetCompilerType();
   }
-  ValueObject *valobj() const override {
-    return m_identifier->GetValue().get();
-  }
+  ValueObject *valobj() const override { return m_id_valobj.get(); }
 
   lldb::DynamicValueType GetUseDynamic() const { return m_use_dynamic; }
   std::string GetName() const { return m_name; }
-  const IdentifierInfo &info() const { return *m_identifier; }
 
   static bool classof(const ASTNode *node) {
     return node->GetKind() == NodeKind::eIdentifierNode;
@@ -309,8 +265,8 @@ private:
   bool m_is_rvalue;
   bool m_is_context_var;
   std::string m_name;
-  std::unique_ptr<IdentifierInfo> m_identifier;
   lldb::DynamicValueType m_use_dynamic;
+  lldb::ValueObjectSP m_id_valobj;
 };
 
 class SizeOfNode : public ASTNode {
@@ -401,10 +357,22 @@ private:
 class CxxStaticCastNode : public ASTNode {
 public:
   CxxStaticCastNode(uint32_t location, CompilerType type, ASTNodeUP operand,
+                    CxxStaticCastKind kind, bool is_rvalue,
+                    CompilerType orig_type)
+      : ASTNode(location, NodeKind::eCxxStaticCastNode), m_type(type),
+        m_operand(std::move(operand)), m_cast_kind(kind),
+        m_is_rvalue(is_rvalue), m_orig_type(orig_type) {
+    assert(kind != CxxStaticCastKind::eBaseToDerived &&
+           kind != CxxStaticCastKind::eDerivedToBase &&
+           "invalid constructor for base-to-derived and derived-to-base casts");
+    m_promo_kind = TypePromotionCastKind::eNone;
+  }
+
+  CxxStaticCastNode(uint32_t location, CompilerType type, ASTNodeUP operand,
                     CxxStaticCastKind kind, bool is_rvalue)
       : ASTNode(location, NodeKind::eCxxStaticCastNode), m_type(type),
         m_operand(std::move(operand)), m_cast_kind(kind),
-        m_is_rvalue(is_rvalue) {
+        m_is_rvalue(is_rvalue), m_orig_type(type) {
     assert(kind != CxxStaticCastKind::eBaseToDerived &&
            kind != CxxStaticCastKind::eDerivedToBase &&
            "invalid constructor for base-to-derived and derived-to-base casts");
@@ -415,7 +383,7 @@ public:
                     TypePromotionCastKind kind, bool is_rvalue)
       : ASTNode(location, NodeKind::eCxxStaticCastNode), m_type(type),
         m_operand(std::move(operand)), m_promo_kind(kind),
-        m_is_rvalue(is_rvalue) {
+        m_is_rvalue(is_rvalue), m_orig_type(type) {
     m_cast_kind = CxxStaticCastKind::eNone;
   }
 
@@ -423,7 +391,8 @@ public:
                     std::vector<uint32_t> idx, bool is_rvalue)
       : ASTNode(location, NodeKind::eCxxStaticCastNode), m_type(type),
         m_operand(std::move(operand)), m_idx(std::move(idx)),
-        m_cast_kind(CxxStaticCastKind::eDerivedToBase), m_is_rvalue(is_rvalue) {
+        m_cast_kind(CxxStaticCastKind::eDerivedToBase), m_is_rvalue(is_rvalue),
+        m_orig_type(type) {
     m_promo_kind = TypePromotionCastKind::eNone;
   }
 
@@ -431,7 +400,8 @@ public:
                     uint64_t offset, bool is_rvalue)
       : ASTNode(location, NodeKind::eCxxStaticCastNode), m_type(type),
         m_operand(std::move(operand)), m_offset(offset),
-        m_cast_kind(CxxStaticCastKind::eBaseToDerived), m_is_rvalue(is_rvalue) {
+        m_cast_kind(CxxStaticCastKind::eBaseToDerived), m_is_rvalue(is_rvalue),
+        m_orig_type(type) {
     m_promo_kind = TypePromotionCastKind::eNone;
   }
 
@@ -441,6 +411,7 @@ public:
   ValueObject *valobj() const override { return m_operand->valobj(); }
 
   CompilerType type() const { return m_type; }
+  CompilerType orig_type() const { return m_orig_type; }
   ASTNode *operand() const { return m_operand.get(); }
   const std::vector<uint32_t> &idx() const { return m_idx; }
   uint64_t offset() const { return m_offset; }
@@ -459,6 +430,7 @@ private:
   CxxStaticCastKind m_cast_kind;
   TypePromotionCastKind m_promo_kind;
   bool m_is_rvalue;
+  CompilerType m_orig_type;
 };
 
 class CxxReinterpretCastNode : public ASTNode {
@@ -488,16 +460,15 @@ private:
 
 class MemberOfNode : public ASTNode {
 public:
-  MemberOfNode(uint32_t location, CompilerType result_type, ASTNodeUP base,
-               std::optional<uint32_t> bitfield_size,
-               std::vector<uint32_t> member_index, bool is_arrow,
-               bool is_synthetic, bool is_dynamic, ConstString name,
-               lldb::ValueObjectSP field_valobj_sp)
-      : ASTNode(location, NodeKind::eMemberOfNode), m_result_type(result_type),
-        m_base(std::move(base)), m_bitfield_size(bitfield_size),
-        m_member_index(std::move(member_index)), m_is_arrow(is_arrow),
-        m_is_synthetic(is_synthetic), m_is_dynamic(is_dynamic),
-        m_field_name(name), m_field_valobj_sp(field_valobj_sp) {}
+  MemberOfNode(uint32_t location, ASTNodeUP base,
+               std::optional<uint32_t> bitfield_size, bool is_arrow,
+               ConstString name)
+      : ASTNode(location, NodeKind::eMemberOfNode), m_base(std::move(base)),
+        m_bitfield_size(bitfield_size), m_is_arrow(is_arrow),
+        m_field_name(name) {
+    CompilerType empty_type;
+    m_result_type = empty_type;
+  }
 
   llvm::Expected<lldb::ValueObjectSP> Accept(Visitor *v) const override;
   bool is_rvalue() const override { return false; }
@@ -506,13 +477,9 @@ public:
     return m_bitfield_size ? m_bitfield_size.value() : 0;
   }
   CompilerType result_type() const override { return m_result_type; }
-  ValueObject *valobj() const override { return m_field_valobj_sp.get(); }
 
   ASTNode *base() const { return m_base.get(); }
-  const std::vector<uint32_t> &member_index() const { return m_member_index; }
   bool is_arrow() const { return m_is_arrow; }
-  bool is_synthetic() const { return m_is_synthetic; }
-  bool is_dynamic() const { return m_is_dynamic; }
   ConstString field_name() const { return m_field_name; }
 
   static bool classof(const ASTNode *node) {
@@ -523,12 +490,8 @@ private:
   CompilerType m_result_type;
   ASTNodeUP m_base;
   std::optional<uint32_t> m_bitfield_size;
-  std::vector<uint32_t> m_member_index;
   bool m_is_arrow;
-  bool m_is_synthetic;
-  bool m_is_dynamic;
   ConstString m_field_name;
-  lldb::ValueObjectSP m_field_valobj_sp;
 };
 
 class ArraySubscriptNode : public ASTNode {

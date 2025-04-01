@@ -51,8 +51,9 @@ class TestFrameVarDILMemberOf(TestBase):
                     substrs=["member reference type 'Sx *' is a "
                              "pointer; did you mean to use '->'"])
         self.expect("frame variable 'sarr.x'", error=True,
-                    substrs=["member reference base type 'Sx[2]' is not a "
-                             "structure or union"])
+                    #substrs=["member reference base type 'Sx[2]' is not a "
+                    #         "structure or union"])
+                    substrs=["no member named 'x' in 'Sx[2]'"])
 
         # Test for record typedefs.
         self.expect("frame variable 'sa.x'", substrs=["3"])

@@ -611,146 +611,6 @@ lldb::BasicType PickCharType(const dil::StringLiteralParser& literal) {
   return lldb::eBasicTypeChar;
 }
 
-std::optional<MemberInfo>
-GetFieldWithNameIndexPath(lldb::ValueObjectSP lhs_val_sp, CompilerType type,
-                          const std::string &name, std::vector<uint32_t> *idx,
-                          CompilerType empty_type, bool use_synthetic,
-                          bool is_dynamic, bool is_arrow) {
-  bool is_synthetic = false;
-  // Go through the fields first.
-  uint32_t num_fields = type.GetNumFields();
-  lldb::ValueObjectSP empty_valobj_sp;
-  for (uint32_t i = 0; i < num_fields; ++i) {
-    uint64_t bit_offset = 0;
-    uint32_t bitfield_bit_size = 0;
-    bool is_bitfield = false;
-    std::string name_sstr;
-    CompilerType field_type(type.GetFieldAtIndex(
-        i, name_sstr, &bit_offset, &bitfield_bit_size, &is_bitfield));
-    auto field_name =
-        name_sstr.length() == 0 ? std::optional<std::string>() : name_sstr;
-    if (field_type.IsValid()) {
-      std::optional<uint32_t> size_in_bits;
-      if (is_bitfield)
-        size_in_bits = bitfield_bit_size;
-      struct MemberInfo field = {field_name,   field_type, size_in_bits,
-                                 is_synthetic, is_dynamic, empty_valobj_sp};
-
-      // Name can be null if this is a padding field.
-      if (field.name == name) {
-        if (lhs_val_sp) {
-          lldb::ValueObjectSP child_valobj_sp =
-              lhs_val_sp->GetChildMemberWithName(name);
-          if (child_valobj_sp &&
-              child_valobj_sp->GetName() == ConstString(name))
-            field.val_obj_sp = child_valobj_sp;
-        }
-
-        if (idx) {
-          assert(idx->empty());
-          // Direct base classes are located before fields, so field members
-          // needs to be offset by the number of base classes.
-          idx->push_back(i + type.GetNumberOfNonEmptyBaseClasses());
-        }
-        return field;
-      } else if (field.type.IsAnonymousType()) {
-        // Every member of an anonymous struct is considered to be a member of
-        // the enclosing struct or union. This applies recursively if the
-        // enclosing struct or union is also anonymous.
-
-        assert(!field.name && "Field should be unnamed.");
-
-        std::optional<MemberInfo> field_in_anon_type =
-            GetFieldWithNameIndexPath(lhs_val_sp, field.type, name, idx,
-                                      empty_type, use_synthetic, is_dynamic,
-                                      is_arrow);
-        if (field_in_anon_type) {
-          if (idx) {
-            idx->push_back(i + type.GetNumberOfNonEmptyBaseClasses());
-          }
-          return field_in_anon_type.value();
-        }
-      }
-    }
-  }
-
-  // LLDB can't access inherited fields of anonymous struct members.
-  if (type.IsAnonymousType()) {
-    return {};
-  }
-
-  // Go through the base classes and look for the field there.
-  uint32_t num_non_empty_bases = 0;
-  uint32_t num_direct_bases = type.GetNumDirectBaseClasses();
-  for (uint32_t i = 0; i < num_direct_bases; ++i) {
-    uint32_t bit_offset;
-    auto base = type.GetDirectBaseClassAtIndex(i, &bit_offset);
-    auto field =
-        GetFieldWithNameIndexPath(lhs_val_sp, base, name, idx, empty_type,
-                                  use_synthetic, is_dynamic, is_arrow);
-    if (field) {
-      if (idx) {
-        idx->push_back(num_non_empty_bases);
-      }
-      return field.value();
-    }
-    if (base.GetNumFields() > 0) {
-      num_non_empty_bases += 1;
-    }
-  }
-
-  // Check for synthetic member
-  if (lhs_val_sp && use_synthetic) {
-    lldb::ValueObjectSP child_valobj_sp = lhs_val_sp->GetSyntheticValue();
-    if (child_valobj_sp) {
-      is_synthetic = true;
-      uint32_t child_idx = child_valobj_sp->GetIndexOfChildWithName(name);
-      child_valobj_sp = child_valobj_sp->GetChildMemberWithName(name);
-      if (child_valobj_sp) {
-        CompilerType field_type = child_valobj_sp->GetCompilerType();
-        if (field_type.IsValid()) {
-          struct MemberInfo field = {name,         field_type, {},
-                                     is_synthetic, is_dynamic, child_valobj_sp};
-          if (idx) {
-            assert(idx->empty());
-            idx->push_back(child_idx);
-          }
-          return field;
-        }
-      }
-    }
-  }
-
-  if (lhs_val_sp) {
-    lldb::ValueObjectSP dynamic_val_sp =
-        lhs_val_sp->GetDynamicValue(lldb::eDynamicDontRunTarget);
-    if (dynamic_val_sp) {
-      CompilerType lhs_type = dynamic_val_sp->GetCompilerType();
-      if (lhs_type.IsPointerType())
-        lhs_type = lhs_type.GetPointeeType();
-      is_dynamic = true;
-      return GetFieldWithNameIndexPath(dynamic_val_sp, lhs_type, name, idx,
-                                       empty_type, use_synthetic, is_dynamic,
-                                       is_arrow);
-    }
-  }
-
-  return {};
-}
-
-std::tuple<std::optional<MemberInfo>, std::vector<uint32_t>>
-GetMemberInfo(lldb::ValueObjectSP lhs_val_sp, CompilerType type,
-              const std::string &name, bool use_synthetic, bool is_arrow) {
-  std::vector<uint32_t> idx;
-  CompilerType empty_type;
-  bool is_dynamic = false;
-  std::optional<MemberInfo> member =
-      GetFieldWithNameIndexPath(lhs_val_sp, type, name, &idx, empty_type,
-                                use_synthetic, is_dynamic, is_arrow);
-  std::reverse(idx.begin(), idx.end());
-  return {member, std::move(idx)};
-}
-
 std::string FormatDiagnostics(llvm::StringRef text, const std::string &message,
                               uint32_t loc) {
   // Get the position, in the current line of text, of the diagnostics pointer.
@@ -2616,7 +2476,7 @@ ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
     }
     cast_kind = CStyleCastKind::eEnumeration;
 
-  } else if (type.IsPointerType()) {
+  } else if (type.IsPointerType() && rhs_type) {
     // Cast to pointer type.
     if (!rhs_type.IsInteger() && !rhs_type.IsEnumerationType() &&
         !rhs_type.IsArrayType() && !rhs_type.IsPointerType() &&
@@ -2651,7 +2511,7 @@ ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
     }
     cast_kind = CStyleCastKind::eReference;
 
-  } else {
+  } else if (rhs_type) {
     // Unsupported cast.
     BailOut(ErrorCode::kNotImplemented,
             llvm::formatv("casting of {0} to {1} is not implemented yet",
@@ -2659,6 +2519,9 @@ ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
             location);
     return std::make_unique<ErrorNode>();
   }
+
+  if (type.IsPointerType() && !rhs_type)
+    promo_kind = TypePromotionCastKind::ePointer;
 
   if (cast_kind != dil::CStyleCastKind::eNone)
     return std::make_unique<CStyleCastNode>(location, type, std::move(rhs), cast_kind);
@@ -2830,6 +2693,7 @@ ASTNodeUP DILParser::BuildCxxStaticCastToReference(CompilerType type,
   CompilerType bad_type;
   auto rhs_type = rhs->GetDereferencedResultType();
   auto type_deref = type.GetNonReferenceType();
+  ASTNode *ast_node = rhs.get();
 
   if (rhs->is_rvalue()) {
     BailOut(ErrorCode::kNotImplemented,
@@ -2840,10 +2704,10 @@ ASTNodeUP DILParser::BuildCxxStaticCastToReference(CompilerType type,
     return std::make_unique<ErrorNode>();
   }
 
-  if (type_deref.CompareTypes(rhs_type)) {
+  if (type_deref.CompareTypes(rhs_type) || llvm::isa<MemberOfNode>(ast_node)) {
     return std::make_unique<CxxStaticCastNode>(
         location, type_deref, std::move(rhs), CxxStaticCastKind::eNoOp,
-        /*is_rvalue*/ false);
+        /*is_rvalue*/ false, type);
   }
 
   if (type_deref.IsRecordType() && rhs_type.IsRecordType()) {
@@ -3110,6 +2974,11 @@ ASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs,
   CompilerType result_type;
   auto rhs_type = rhs->GetDereferencedResultType();
   CompilerType bad_type;
+  bool empty_result_is_ok = false;
+  ASTNode *ast_node = rhs.get();
+
+  if (llvm::isa<MemberOfNode>(ast_node) || llvm::isa<TernaryOpNode>(ast_node))
+    empty_result_is_ok = true;
 
   switch (kind) {
     case UnaryOpKind::Deref: {
@@ -3132,11 +3001,9 @@ ASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs,
                 rhs_valobj_sp->Dereference(deref_error);
             if (child_sp && deref_error.Success()) {
               rhs_type = child_sp->GetCompilerType().GetPointerType();
-              std::unique_ptr<IdentifierInfo> new_info =
-                  IdentifierInfo::FromValue(*child_sp);
               ASTNodeUP new_rhs = std::make_unique<IdentifierNode>(
                   id_node->GetLocation(), id_node->GetName(), m_use_dynamic,
-                  std::move(new_info), id_node->is_rvalue(),
+                  std::move(child_sp), id_node->is_rvalue(),
                   id_node->is_context_var());
               rhs = std::move(new_rhs);
               result_type = rhs->GetDereferencedResultType();
@@ -3144,15 +3011,11 @@ ASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs,
             }
           }
         } else if (llvm::isa<MemberOfNode>(ast_node)) {
-          const MemberOfNode *member_node =
-              static_cast<const MemberOfNode*>(ast_node);
-          rhs_valobj_sp = member_node->valobj()->GetSP();
-          ValueObject *rhs_valobj = member_node->base()->valobj();
-          if (rhs_valobj)
-            rhs_valobj_sp = rhs_valobj->GetSP();
-          if (rhs_valobj_sp)
-            rhs_type = rhs_valobj_sp->GetCompilerType();
-          result_type = rhs_type;
+          // Can't know the type of members until we get into the interpreter.
+          CompilerType empty_type;
+          result_type = empty_type;
+          empty_result_is_ok = true;
+          // Assume it's good until proven otherwise.
           synthetic_child = true;
         }
 
@@ -3220,7 +3083,7 @@ ASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs,
       llvm_unreachable("invalid unary op kind");
   }
 
-  if (!result_type) {
+  if (!result_type && !empty_result_is_ok) {
     BailOut(ErrorCode::kInvalidOperandType,
             llvm::formatv(kInvalidOperandsToUnaryExpression,
                           rhs_type.TypeDescription()),
@@ -3352,15 +3215,20 @@ ASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs,
     result_type = PrepareCompositeAssignment(comp_assign_type, lhs, location);
   }
 
+  bool empty_result_type_ok = false;
+  const ASTNode *lhs_ast_node = lhs.get();
+  const ASTNode *rhs_ast_node = rhs.get();
+  if (!result_type && (llvm::isa<MemberOfNode>(lhs_ast_node) ||
+                       llvm::isa<MemberOfNode>(rhs_ast_node)))
+    empty_result_type_ok = true;
+
   // If the result type is valid, then the binary operation is valid!
-  if (result_type.IsValid()) {
+  if (result_type.IsValid() || empty_result_type_ok) {
     ValueObject *valobj_ptr = nullptr;
     if (result_type.IsPointerType()) {
       // Check to see if either lhs or rhs is an IdentifierNode. If so,
       // extract the valobj from the IdentifierNode & pass it to
       // BinaryOpNode (for help with looking up members of dynamic types).
-      const ASTNode *lhs_ast_node = lhs.get();
-      const ASTNode *rhs_ast_node = rhs.get();
       lldb::ValueObjectSP valobj_sp;
       if (llvm::isa<IdentifierNode>(lhs_ast_node)) {
         const IdentifierNode *id_node =
@@ -3557,8 +3425,8 @@ ASTNodeUP DILParser::BuildBinarySubscript(ASTNodeUP lhs, ASTNodeUP rhs,
   }
 
   return std::make_unique<ArraySubscriptNode>(
-      location, base->GetDereferencedResultType().GetPointeeType(), std::move(base),
-      std::move(index));
+      location, base->GetDereferencedResultType().GetPointeeType(),
+      std::move(base), std::move(index));
 }
 
 ASTNodeUP DILParser::BuildMemberOf(ASTNodeUP lhs, std::string member_id,
@@ -3573,84 +3441,10 @@ ASTNodeUP DILParser::BuildMemberOf(ASTNodeUP lhs, std::string member_id,
   if (valobj)
     lhs_valobj_sp = valobj->GetSP();
 
-  if (is_arrow) {
-    if (!lhs_type.IsPointerType() && !lhs_type.IsArrayType()) {
-      Status deref_error;
-      deref_sp = lhs_valobj_sp->Dereference(deref_error);
-      if (deref_error.Success()) {
-        lhs_valobj_sp = deref_sp;
-        lhs_type = lhs_valobj_sp->GetCompilerType().GetPointerType();
-      } else  {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv("member reference type {0} is not a pointer; "
-                              "did you mean to use '.'?",
-                              lhs_type.TypeDescription()),
-                location);
-        return std::make_unique<ErrorNode>();
-      }
-    } else if (lhs_type.IsArrayType()) {
-      // If LHS is an array, convert it to pointer.
-      lhs = InsertArrayToPointerConversion(std::move(lhs));
-      lhs_type = lhs->GetDereferencedResultType();
-      lhs_valobj_sp = lhs_valobj_sp->GetChildAtIndex(0);
-    }
-
-    lhs_type = lhs_type.GetPointeeType();
-  } else {
-    // "member of object" operator, check that LHS is an object.
-    if (lhs_type.IsPointerType()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("member reference type {0} is a pointer; "
-                            "did you mean to use '->'?",
-                            lhs_type.TypeDescription()),
-              location);
-      return std::make_unique<ErrorNode>();
-    }
-  }
-
-  // Check if LHS is a record type, i.e. class/struct or union.
-  if (!lhs_type.IsRecordType()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv(
-                "member reference base type {0} is not a structure or union",
-                lhs_type.TypeDescription()),
-            location);
-    return std::make_unique<ErrorNode>();
-  }
-
-  auto [opt_member, idx] = GetMemberInfo(lhs_valobj_sp, lhs_type, member_id,
-                                         UseSynthetic(), is_arrow);
-
-  if (!opt_member) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("no member named '{0}' in {1}", member_id,
-                          lhs_type.GetFullyUnqualifiedType().TypeDescription()),
-            location);
-    return std::make_unique<ErrorNode>();
-  }
-
-  MemberInfo member = opt_member.value();
-  std::optional<uint32_t> bitfield_size = member.bitfield_size_in_bits;
-  uint64_t byte_size = 0;
-  if (auto temp =
-      member.type.GetByteSize(m_ctx_scope.get()))
-    byte_size = temp.value();
-  if (bitfield_size && bitfield_size.value() > byte_size * CHAR_BIT) {
-    // If the declared bitfield size is exceeding the type size, shrink
-    // the bitfield size to the size of the type in bits.
-    bitfield_size = byte_size * CHAR_BIT;
-  }
-
-  std::string tmp_name= "";
-  if (member.name)
-    tmp_name = member.name.value();
-  ConstString field_name(tmp_name.c_str());
-  return std::make_unique<MemberOfNode>(location, member.type, std::move(lhs),
-                                        bitfield_size,
-                                        std::move(idx), is_arrow,
-                                        member.is_synthetic, member.is_dynamic,
-                                        field_name,
-                                        member.val_obj_sp);
+  std::optional<uint32_t> bitfield_size;
+  ConstString field_name(member_id.c_str());
+  return std::make_unique<MemberOfNode>(location, std::move(lhs), bitfield_size,
+                                        is_arrow, field_name);
 }
 
 void DILParser::Expect(Token::Kind kind) {
@@ -3678,6 +3472,10 @@ ASTNodeUP DILParser::BuildIncrementDecrement(UnaryOpKind kind, ASTNodeUP rhs,
 
   CompilerType bad_type;
   auto rhs_type = rhs->GetDereferencedResultType();
+  ASTNode *ast_node = rhs.get();
+  bool empty_rhs_type_ok = false;
+  if (llvm::isa<MemberOfNode>(ast_node))
+    empty_rhs_type_ok = true;
 
   // In C++ the requirement here is that the expression is "assignable". However
   // in the debugger context side-effects are not allowed and the only case
@@ -3709,7 +3507,8 @@ ASTNodeUP DILParser::BuildIncrementDecrement(UnaryOpKind kind, ASTNodeUP rhs,
             location);
     return std::make_unique<ErrorNode>();
   }
-  if (!rhs_type.IsScalarType() && !rhs_type.IsPointerType()) {
+  if (!rhs_type.IsScalarType() && !rhs_type.IsPointerType() &&
+      !empty_rhs_type_ok) {
     BailOut(ErrorCode::kInvalidOperandType,
             llvm::formatv("cannot {0} value of type '{1}'", op_name,
                           rhs_type.GetTypeName()),

@@ -60,8 +60,9 @@ class TestFrameVarDILMemberOf(TestBase):
                              "pointer; did you mean to use '->'"])
                     #substrs=["\"sp\" is a pointer and . was used to attempt to access \"x\". Did you mean \"sp->x\"?"])
         self.expect("frame variable 'sarr.x'", error=True,
-                    substrs=["member reference base type 'Sx[2]' is not a "
-                             "structure or union"])
+                    #substrs=["member reference base type 'Sx[2]' is not a "
+                    #         "structure or union"])
+                    substrs=["no member named 'x' in 'Sx[2]'"])
                     #substrs=["\"x\" is not a member of \"(Sx[2]) sarr\""])
 
         # Test for record typedefs.

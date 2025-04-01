@@ -870,6 +870,7 @@ TEST_F(EvalTest, PointerIntegerComparison) {
 }
 
 TEST_F(EvalTest, TestPointerDereference) {
+  EXPECT_THAT(Eval("*array"), IsEqual("0"));
   EXPECT_THAT(Eval("*p_int0"), IsEqual("0"));
   EXPECT_THAT(Eval("*p_int0 + 1"), IsEqual("1"));
   EXPECT_THAT(Eval("*cp_int5"), IsEqual("5"));
@@ -1062,7 +1063,7 @@ TEST_F(EvalTest, TestMemberOfAnonymousMember) {
   EXPECT_THAT(Eval("a.y"), IsEqual("2"));
 
   EXPECT_THAT(Eval("b.x"), IsError("no member named 'x' in 'B'"));
-  // EXPECT_THAT(Eval("b.y"), IsError("no member named 'y' in 'B'"));
+  EXPECT_THAT(Eval("b.y"), XFail(IsError("no member named 'y' in 'B'")));
   EXPECT_THAT(Eval("b.z"), IsEqual("3"));
   EXPECT_THAT(Eval("b.w"), IsEqual("4"));
   EXPECT_THAT(Eval("b.a.x"), IsEqual("1"));

@@ -61,7 +61,15 @@ public:
   void SetContextVars(
       std::unordered_map<std::string, lldb::ValueObjectSP> context_vars);
 
+  bool AllowSideEffects() const { return m_allow_side_effects; }
+
+  void SetAllowSideEffects(bool allow_side_effects) {
+    m_allow_side_effects = allow_side_effects;
+  }
+
  protected:
+   llvm::Error BailOut(ErrorCode code, const std::string &message,
+                       uint32_t loc);
    llvm::Expected<lldb::ValueObjectSP>
    DILEvalNode(const ASTNode *node, FlowAnalysis *flow = nullptr);
 
@@ -96,6 +104,34 @@ public:
    llvm::Expected<lldb::ValueObjectSP>
    Visit(const TernaryOpNode *node) override;
 
+   llvm::Error PrepareIncrementDecrement(const UnaryOpNode *node,
+                                         CompilerType rhs_type);
+   llvm::Error PrepareBinaryLogical(lldb::ValueObjectSP &lhs,
+                                    lldb::ValueObjectSP &rhs, uint32_t location,
+                                    bool is_comp_assign);
+   llvm::Error PrepareBinaryAddition(lldb::ValueObjectSP &lhs,
+                                     lldb::ValueObjectSP &rhs,
+                                     uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinarySubtraction(lldb::ValueObjectSP &lhs,
+                                        lldb::ValueObjectSP &rhs,
+                                        uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinaryOpScalar(lldb::ValueObjectSP &lhs,
+                                     lldb::ValueObjectSP &rhs,
+                                     uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinaryOpInteger(lldb::ValueObjectSP &lhs,
+                                      lldb::ValueObjectSP &rhs,
+                                      uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareBinaryShift(lldb::ValueObjectSP &lhs,
+                                  lldb::ValueObjectSP &rhs, uint32_t location,
+                                  bool is_comp_assign);
+   llvm::Error PrepareBinaryComparison(BinaryOpKind kind,
+                                       lldb::ValueObjectSP &lhs,
+                                       lldb::ValueObjectSP &rhs,
+                                       uint32_t location, bool is_comp_assign);
+   llvm::Error PrepareAssignment(lldb::ValueObjectSP &lhs,
+                                 lldb::ValueObjectSP &rhs, uint32_t location);
+   llvm::Error CheckCompositeAssignment(const BinaryOpNode *node);
+
    lldb::ValueObjectSP EvaluateComparison(BinaryOpKind kind,
                                           lldb::ValueObjectSP lhs,
                                           lldb::ValueObjectSP rhs);
@@ -109,11 +145,9 @@ public:
    lldb::ValueObjectSP EvaluateUnaryPrefixDecrement(lldb::ValueObjectSP rhs);
 
    llvm::Expected<lldb::ValueObjectSP>
-   EvaluateBinaryAddition(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs,
-                          uint32_t loc);
+   EvaluateBinaryAddition(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
    llvm::Expected<lldb::ValueObjectSP>
-   EvaluateBinarySubtraction(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs,
-                             CompilerType result_type);
+   EvaluateBinarySubtraction(lldb::ValueObjectSP lhs, lldb::ValueObjectSP rhs);
    lldb::ValueObjectSP EvaluateBinaryMultiplication(lldb::ValueObjectSP lhs,
                                                     lldb::ValueObjectSP rhs);
    llvm::Expected<lldb::ValueObjectSP>
@@ -178,6 +212,8 @@ public:
   lldb::DynamicValueType m_default_dynamic;
 
   std::shared_ptr<StackFrame> m_exe_ctx_scope;
+
+  bool m_allow_side_effects = true;
 };
 
 }  // namespace lldb_private::dil

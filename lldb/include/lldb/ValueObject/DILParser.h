@@ -259,32 +259,10 @@ class DILParser {
    ASTNodeUP BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
                                      uint32_t location);
    ASTNodeUP BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs, uint32_t location);
-   ASTNodeUP BuildIncrementDecrement(UnaryOpKind kind, ASTNodeUP rhs,
-                                     uint32_t location);
    ASTNodeUP BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs, ASTNodeUP rhs,
                            uint32_t location);
-   CompilerType PrepareBinaryAddition(ASTNodeUP &lhs, ASTNodeUP &rhs,
-                                      uint32_t location, bool is_comp_assign);
-   CompilerType PrepareBinarySubtraction(ASTNodeUP &lhs, ASTNodeUP &rhs,
-                                         uint32_t location,
-                                         bool is_comp_assign);
-   CompilerType PrepareBinaryMulDiv(ASTNodeUP &lhs, ASTNodeUP &rhs,
-                                    bool is_comp_assign);
-   CompilerType PrepareBinaryRemainder(ASTNodeUP &lhs, ASTNodeUP &rhs,
-                                       bool is_comp_assign);
-   CompilerType PrepareBinaryBitwise(ASTNodeUP &lhs, ASTNodeUP &rhs,
-                                     bool is_comp_assign);
-   CompilerType PrepareBinaryShift(ASTNodeUP &lhs, ASTNodeUP &rhs,
-                                   bool is_comp_assign);
-   CompilerType PrepareBinaryComparison(BinaryOpKind kind, ASTNodeUP &lhs,
-                                        ASTNodeUP &rhs, uint32_t location);
-   CompilerType PrepareBinaryLogical(const ASTNodeUP &lhs,
-                                     const ASTNodeUP &rhs);
    ASTNodeUP BuildBinarySubscript(ASTNodeUP lhs, ASTNodeUP rhs,
                                   uint32_t location);
-   CompilerType PrepareCompositeAssignment(CompilerType comp_assign_type,
-                                           const ASTNodeUP &lhs,
-                                           uint32_t location);
    ASTNodeUP BuildTernaryOp(ASTNodeUP cond, ASTNodeUP lhs, ASTNodeUP rhs,
                             uint32_t location);
    ASTNodeUP BuildMemberOf(ASTNodeUP lhs, std::string member_id, bool is_arrow,

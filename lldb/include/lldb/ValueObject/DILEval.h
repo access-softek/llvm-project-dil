@@ -11,6 +11,8 @@
 
 #include "lldb/ValueObject/DILAST.h"
 #include "lldb/ValueObject/DILParser.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
 #include <memory>
 #include <vector>
 
@@ -54,15 +56,14 @@ public:
               lldb::DynamicValueType use_dynamic,
               std::shared_ptr<StackFrame> frame_sp);
 
-  llvm::Expected<lldb::ValueObjectSP> DILEval(const ASTNode *tree,
-                                              lldb::TargetSP target_sp);
+  llvm::Expected<lldb::ValueObjectSP> Evaluate(const ASTNode *tree);
 
   void SetContextVars(
       std::unordered_map<std::string, lldb::ValueObjectSP> context_vars);
 
  protected:
-   llvm::Expected<lldb::ValueObjectSP>
-   DILEvalNode(const ASTNode *node, FlowAnalysis *flow = nullptr);
+   llvm::Expected<lldb::ValueObjectSP> EvalNode(const ASTNode *node,
+                                                FlowAnalysis *flow = nullptr);
 
    lldb::ValueObjectSP EvaluateMemberOf(lldb::ValueObjectSP value,
                                         const std::vector<uint32_t> &path,

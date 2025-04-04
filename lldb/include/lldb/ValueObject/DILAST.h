@@ -18,6 +18,8 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Error.h"
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -280,12 +282,11 @@ private:
 class IdentifierNode : public ASTNode {
 public:
   IdentifierNode(uint32_t location, std::string name,
-                 lldb::DynamicValueType use_dynamic,
                  std::unique_ptr<IdentifierInfo> identifier, bool is_rvalue,
                  bool is_context_var)
       : ASTNode(location, NodeKind::eIdentifierNode), m_is_rvalue(is_rvalue),
         m_is_context_var(is_context_var), m_name(std::move(name)),
-        m_identifier(std::move(identifier)), m_use_dynamic(use_dynamic) {}
+        m_identifier(std::move(identifier)) {}
 
   llvm::Expected<lldb::ValueObjectSP> Accept(Visitor *v) const override;
   bool is_rvalue() const override { return m_is_rvalue; }
@@ -297,7 +298,6 @@ public:
     return m_identifier->GetValue().get();
   }
 
-  lldb::DynamicValueType GetUseDynamic() const { return m_use_dynamic; }
   std::string GetName() const { return m_name; }
   const IdentifierInfo &info() const { return *m_identifier; }
 
@@ -310,7 +310,6 @@ private:
   bool m_is_context_var;
   std::string m_name;
   std::unique_ptr<IdentifierInfo> m_identifier;
-  lldb::DynamicValueType m_use_dynamic;
 };
 
 class SizeOfNode : public ASTNode {

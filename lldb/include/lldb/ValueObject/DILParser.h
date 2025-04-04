@@ -10,13 +10,16 @@
 #define LLDB_VALUEOBJECT_DILPARSER_H
 
 #include "lldb/Target/ExecutionContextScope.h"
+#include "lldb/Utility/DiagnosticsRendering.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/ValueObject/DILAST.h"
 #include "lldb/ValueObject/DILLexer.h"
 #include "lldb/ValueObject/DILLiteralParsers.h"
+#include "llvm/Support/Error.h"
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <tuple>
 #include <vector>
 
@@ -69,8 +72,30 @@ enum class ErrorCode : unsigned char {
   kUnknown,
 };
 
-std::string FormatDiagnostics(llvm::StringRef input_expr,
-                              const std::string &message, uint32_t loc);
+// The following is modeled on class OptionParseError.
+class DILDiagnosticError
+    : public llvm::ErrorInfo<DILDiagnosticError, DiagnosticError> {
+  DiagnosticDetail m_detail;
+
+public:
+  using llvm::ErrorInfo<DILDiagnosticError, DiagnosticError>::ErrorInfo;
+  DILDiagnosticError(DiagnosticDetail detail)
+      : ErrorInfo(make_error_code(std::errc::invalid_argument)),
+        m_detail(std::move(detail)) {}
+
+  DILDiagnosticError(llvm::StringRef expr, const std::string &message,
+                     uint32_t loc, uint16_t err_len);
+
+  std::unique_ptr<CloneableError> Clone() const override {
+    return std::make_unique<DILDiagnosticError>(m_detail);
+  }
+
+  llvm::ArrayRef<DiagnosticDetail> GetDetails() const override {
+    return {m_detail};
+  }
+
+  std::string message() const override { return m_detail.rendered; }
+};
 
 Status SetUbStatus(ErrorCode code);
 
@@ -170,9 +195,9 @@ class DILParser {
                       std::shared_ptr<StackFrame> frame_sp,
                       lldb::DynamicValueType use_dynamic, bool use_synthetic,
                       bool fragile_ivar, bool check_ptr_vs_member,
-                      Status &error);
+                      llvm::Error &error);
 
-   llvm::Expected<ASTNodeUP> Run();
+   ASTNodeUP Run();
 
    ASTNodeUP ParseExpression();
    ASTNodeUP ParseAssignmentExpression();
@@ -227,9 +252,7 @@ class DILParser {
                                     bool is_src_literal_zero = false);
    ASTNodeUP InsertImplicitConversion(ASTNodeUP expr, CompilerType type);
 
-   void BailOut(ErrorCode error_code, const std::string &error, uint32_t loc);
-
-   void BailOut(Status error);
+   void BailOut(const std::string &error, uint32_t loc, uint16_t err_len);
 
    void Expect(Token::Kind kind);
 
@@ -297,7 +320,8 @@ class DILParser {
    }
 
   void TentativeParsingRollback(uint32_t saved_idx) {
-    m_error.Clear();
+    if (m_error)
+      llvm::consumeError(std::move(m_error));
     m_dil_lexer.ResetTokenIdx(saved_idx);
   }
 
@@ -312,7 +336,7 @@ class DILParser {
 
   DILLexer m_dil_lexer;
   // Holds an error if it occures during parsing.
-  Status &m_error;
+  llvm::Error &m_error;
 
   bool m_allow_side_effects = true;
 

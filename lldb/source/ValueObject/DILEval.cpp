@@ -577,17 +577,13 @@ void Interpreter::SetContextVars(
   m_context_vars = std::move(context_vars);
 }
 
-llvm::Expected<lldb::ValueObjectSP>
-Interpreter::DILEval(const ASTNode *tree, lldb::TargetSP target_sp) {
-  // Evaluate an AST.
-  auto value_or_error = DILEvalNode(tree);
-
-  // Return the computed result-or-error.
-  return value_or_error;
+llvm::Expected<lldb::ValueObjectSP> Interpreter::Evaluate(const ASTNode *tree) {
+  // Traverse and evaluate an AST.
+  return EvalNode(tree);
 }
 
-llvm::Expected<lldb::ValueObjectSP>
-Interpreter::DILEvalNode(const ASTNode *node, FlowAnalysis *flow) {
+llvm::Expected<lldb::ValueObjectSP> Interpreter::EvalNode(const ASTNode *node,
+                                                          FlowAnalysis *flow) {
   // Set up the evaluation context for the current node.
   m_flow_analysis_chain.push_back(flow);
   // Traverse an AST pointed by the `node`.
@@ -685,7 +681,7 @@ Interpreter::Visit(const StringLiteralNode *node) {
 
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const IdentifierNode *node) {
-  lldb::DynamicValueType use_dynamic = node->GetUseDynamic();
+  lldb::DynamicValueType use_dynamic = m_default_dynamic;
 
   std::unique_ptr<IdentifierInfo> identifier =
       LookupIdentifier(node->GetName(), m_exe_ctx_scope, use_dynamic);
@@ -697,10 +693,8 @@ Interpreter::Visit(const IdentifierNode *node) {
   if (!identifier) {
     std::string errMsg =
         llvm::formatv("use of undeclared identifier '{0}'", node->GetName());
-    Status error = Status(
-        (uint32_t)ErrorCode::kUndeclaredIdentifier, lldb::eErrorTypeGeneric,
-        FormatDiagnostics(m_expr, errMsg, node->GetLocation()));
-    return error.ToError();
+    return llvm::make_error<DILDiagnosticError>(
+        m_expr, errMsg, node->GetLocation(), node->GetName().size());
   }
 
   lldb::ValueObjectSP val;
@@ -715,29 +709,22 @@ Interpreter::Visit(const IdentifierNode *node) {
       assert(node->is_context_var() && "invalid ast: context var expected");
       val = ResolveContextVar(node->GetName());
       if (!val) {
-        Status error = Status(
-            (uint32_t)ErrorCode::kUndeclaredIdentifier, lldb::eErrorTypeGeneric,
-            FormatDiagnostics(
-                m_expr,
-                llvm::formatv("use of undeclared identifier '{0}'",
-                              node->GetName()),
-                node->GetLocation()));
-        return error.ToError();
+        return llvm::make_error<DILDiagnosticError>(
+            m_expr,
+            llvm::formatv("use of undeclared identifier '{0}'",
+                          node->GetName()),
+            node->GetLocation(), node->GetName().size());
       }
       if (!node->GetDereferencedResultType().CompareTypes(
               val->GetCompilerType())) {
-        Status error = Status(
-            (uint32_t)ErrorCode::kInvalidOperandType, lldb::eErrorTypeGeneric,
-            FormatDiagnostics(
-                m_expr,
-                llvm::formatv(
-                    "unexpected type of context variable"
-                    " '{0}' (expected {1}, got {2})",
-                    node->GetName(),
-                    node->GetDereferencedResultType().TypeDescription(),
-                    val->GetCompilerType().TypeDescription()),
-                node->GetLocation()));
-        return error.ToError();
+        return llvm::make_error<DILDiagnosticError>(
+            m_expr,
+            llvm::formatv("unexpected type of context variable"
+                          " '{0}' (expected {1}, got {2})",
+                          node->GetName(),
+                          node->GetDereferencedResultType().TypeDescription(),
+                          val->GetCompilerType().TypeDescription()),
+            node->GetLocation(), node->GetName().size());
       }
       break;
 
@@ -748,13 +735,6 @@ Interpreter::Visit(const IdentifierNode *node) {
     default:
       assert(false && "invalid ast: invalid identifier kind");
     }
-
-  if (val->GetCompilerType().IsReferenceType()) {
-    Status error;
-    val = val->Dereference(error);
-    if (error.Fail())
-      return error.ToError();
-  }
 
   return val;
 }
@@ -791,7 +771,7 @@ Interpreter::Visit(const BuiltinFunctionCallNode *node) {
            "invalid ast: expected exactly one argument to `__log2`");
     // Get the first (and the only) argument and evaluate it.
     auto &arg = node->arguments()[0];
-    auto val_or_err = DILEvalNode(arg.get());
+    auto val_or_err = EvalNode(arg.get());
     if (!val_or_err) {
       return val_or_err;
     }
@@ -826,7 +806,7 @@ Interpreter::Visit(const BuiltinFunctionCallNode *node) {
            "invalid ast: expected exactly two arguments to `__findnonnull`");
 
     auto &arg1 = node->arguments()[0];
-    auto val_or_err = DILEvalNode(arg1.get());
+    auto val_or_err = EvalNode(arg1.get());
     if (!val_or_err) {
       return val_or_err;
     }
@@ -840,19 +820,16 @@ Interpreter::Visit(const BuiltinFunctionCallNode *node) {
     } else if (val1_sp->GetCompilerType().IsArrayType()) {
       addr = val1_sp->GetLoadAddress();
     } else {
-      Status error = Status(
-          (uint32_t)ErrorCode::kInvalidOperandType, lldb::eErrorTypeGeneric,
-          FormatDiagnostics(
-              m_expr,
-              llvm::formatv("no known conversion from '{0}' to 'T*' for 1st "
-                            "argument of __findnonnull()",
-                            val1_sp->GetCompilerType().GetTypeName()),
-              arg1->GetLocation()));
-      return error.ToError();
+      return llvm::make_error<DILDiagnosticError>(
+          m_expr,
+          llvm::formatv("no known conversion from '{0}' to 'T*' for 1st "
+                        "argument of __findnonnull()",
+                        val1_sp->GetCompilerType().GetTypeName()),
+          arg1->GetLocation(), 2);
     }
 
     auto &arg2 = node->arguments()[1];
-    auto val2_or_err = DILEvalNode(arg2.get());
+    auto val2_or_err = EvalNode(arg2.get());
     if (!val2_or_err) {
       return val2_or_err;
     }
@@ -860,16 +837,13 @@ Interpreter::Visit(const BuiltinFunctionCallNode *node) {
     int64_t size = val2_sp->GetValueAsSigned(0);
 
     if (size < 0 || size > 100000000) {
-      Status error = Status(
-          (uint32_t)ErrorCode::kInvalidOperandType, lldb::eErrorTypeGeneric,
-          FormatDiagnostics(
-              m_expr,
-              llvm::formatv(
-                  "passing in a buffer size ('{0}') that is negative or in "
-                  "excess of 100 million to __findnonnull() is not allowed.",
-                  size),
-              arg2->GetLocation()));
-      return error.ToError();
+      return llvm::make_error<DILDiagnosticError>(
+          m_expr,
+          llvm::formatv(
+              "passing in a buffer size ('{0}') that is negative or in "
+              "excess of 100 million to __findnonnull() is not allowed.",
+              size),
+          arg2->GetLocation(), 2);
     }
 
     lldb::ProcessSP process = m_target->GetProcessSP();
@@ -895,15 +869,12 @@ Interpreter::Visit(const BuiltinFunctionCallNode *node) {
           process->ReadMemory(addr + i * ptr_size, &memory, ptr_size, error);
 
       if (error.Fail() || read != ptr_size) {
-        Status error =
-            Status((uint32_t)ErrorCode::kUnknown, lldb::eErrorTypeGeneric,
-                   FormatDiagnostics(
-                       m_expr,
-                       llvm::formatv("error calling __findnonnull(): {0}",
-                                     error.AsCString() ? error.AsCString()
-                                                       : "cannot read memory"),
-                       node->GetLocation()));
-        return error.ToError();
+        return llvm::make_error<DILDiagnosticError>(
+            m_expr,
+            llvm::formatv("error calling __findnonnull(): {0}",
+                          error.AsCString() ? error.AsCString()
+                                            : "cannot read memory"),
+            node->GetLocation(), node->name().size());
       }
 
       if (memory != 0) {
@@ -932,7 +903,7 @@ llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const CStyleCastNode *node) {
   // Get the type and the value we need to cast.
   auto type = node->type();
-  auto rhs_or_err = DILEvalNode(node->operand());
+  auto rhs_or_err = EvalNode(node->operand());
   if (!rhs_or_err) {
     return rhs_or_err;
   }
@@ -1021,7 +992,7 @@ llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const CxxStaticCastNode *node) {
   // Get the type and the value we need to cast.
   auto type = node->type();
-  auto rhs_or_err = DILEvalNode(node->operand());
+  auto rhs_or_err = EvalNode(node->operand());
   if (!rhs_or_err) {
     return rhs_or_err;
   }
@@ -1119,7 +1090,7 @@ llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const CxxReinterpretCastNode *node) {
   // Get the type and the value we need to cast.
   auto type = node->type();
-  auto rhs_or_err = DILEvalNode(node->operand());
+  auto rhs_or_err = EvalNode(node->operand());
   if (!rhs_or_err) {
     return rhs_or_err;
   }
@@ -1197,7 +1168,7 @@ Interpreter::Visit(const MemberOfNode *node) {
   // for members from non-virtual bases.
 
   Status error;
-  auto base_or_err = DILEvalNode(node->base());
+  auto base_or_err = EvalNode(node->base());
   if (!base_or_err) {
     return base_or_err;
   }
@@ -1224,12 +1195,12 @@ Interpreter::Visit(const MemberOfNode *node) {
 
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const ArraySubscriptNode *node) {
-  auto base_or_err = DILEvalNode(node->base());
+  auto base_or_err = EvalNode(node->base());
   if (!base_or_err) {
     return base_or_err;
   }
   lldb::ValueObjectSP base = *base_or_err;
-  auto index_or_err = DILEvalNode(node->index());
+  auto index_or_err = EvalNode(node->index());
   if (!index_or_err) {
     return index_or_err;
   }
@@ -1271,16 +1242,13 @@ Interpreter::Visit(const ArraySubscriptNode *node) {
   if (synthetic) {
     uint32_t num_children = synthetic->GetNumChildrenIgnoringErrors();
     if (index->GetValueAsSigned(0) >= num_children) {
-      Status error = Status(
-          (uint32_t)ErrorCode::kSubscriptOutOfRange, lldb::eErrorTypeGeneric,
-          FormatDiagnostics(
-              m_expr,
-              llvm::formatv("array index {0} is not valid for \"({1}) {2}\"",
-                            index->GetValueAsSigned(0),
-                            base->GetTypeName().AsCString("<invalid type>"),
-                            base->GetName().AsCString()),
-              node->GetLocation()));
-      return error.ToError();
+      return llvm::make_error<DILDiagnosticError>(
+          m_expr,
+          llvm::formatv("array index {0} is not valid for \"({1}) {2}\"",
+                        index->GetValueAsSigned(0),
+                        base->GetTypeName().AsCString("<invalid type>"),
+                        base->GetName().AsCString()),
+          node->GetLocation(), 3);
     }
   }
 
@@ -1321,7 +1289,7 @@ Interpreter::Visit(const BinaryOpNode *node) {
   // Short-circuit logical operators.
   if (node->kind() == BinaryOpKind::LAnd || node->kind() == BinaryOpKind::LOr) {
     Status error;
-    auto lhs_or_err = DILEvalNode(node->lhs());
+    auto lhs_or_err = EvalNode(node->lhs());
     if (!lhs_or_err) {
       return lhs_or_err;
     }
@@ -1349,7 +1317,7 @@ Interpreter::Visit(const BinaryOpNode *node) {
     }
 
     // Breaking early didn't happen, evaluate the RHS and use it as a result.
-    auto rhs_or_err = DILEvalNode(node->rhs());
+    auto rhs_or_err = EvalNode(node->rhs());
     if (!rhs_or_err) {
       return rhs_or_err;
     }
@@ -1371,12 +1339,12 @@ Interpreter::Visit(const BinaryOpNode *node) {
   }
 
   // All other binary operations require evaluating both operands.
-  auto lhs_or_err = DILEvalNode(node->lhs());
+  auto lhs_or_err = EvalNode(node->lhs());
   if (!lhs_or_err) {
     return lhs_or_err;
   }
   lldb::ValueObjectSP lhs = *lhs_or_err;
-  auto rhs_or_err = DILEvalNode(node->rhs());
+  auto rhs_or_err = EvalNode(node->rhs());
   if (!rhs_or_err) {
     return rhs_or_err;
   }
@@ -1469,7 +1437,7 @@ Interpreter::Visit(const UnaryOpNode *node) {
       /* address_of_is_pending */ node->kind() == UnaryOpKind::AddrOf);
 
   Status error;
-  auto rhs_or_err = DILEvalNode(node->rhs(), &rhs_flow);
+  auto rhs_or_err = EvalNode(node->rhs(), &rhs_flow);
   if (!rhs_or_err) {
     return rhs_or_err;
   }
@@ -1546,7 +1514,7 @@ Interpreter::Visit(const UnaryOpNode *node) {
 
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const TernaryOpNode *node) {
-  auto cond_or_err = DILEvalNode(node->cond());
+  auto cond_or_err = EvalNode(node->cond());
   if (!cond_or_err) {
     return cond_or_err;
   }
@@ -1560,9 +1528,9 @@ Interpreter::Visit(const TernaryOpNode *node) {
   auto value_or_err = cond->GetValueAsBool();
   if (value_or_err) {
     if (*value_or_err)
-      return DILEvalNode(node->lhs(), flow_analysis());
+      return EvalNode(node->lhs(), flow_analysis());
 
-    return DILEvalNode(node->rhs(), flow_analysis());
+    return EvalNode(node->rhs(), flow_analysis());
   }
   return value_or_err.takeError();
 }

@@ -13,6 +13,7 @@
 
 #include "lldb/ValueObject/DILParser.h"
 #include "lldb/Target/ExecutionContextScope.h"
+#include "lldb/Utility/DiagnosticsRendering.h"
 #include "lldb/ValueObject/DILAST.h"
 #include "lldb/ValueObject/DILEval.h"
 #include "lldb/lldb-enumerations.h"
@@ -751,16 +752,21 @@ GetMemberInfo(lldb::ValueObjectSP lhs_val_sp, CompilerType type,
   return {member, std::move(idx)};
 }
 
-std::string FormatDiagnostics(llvm::StringRef text, const std::string &message,
-                              uint32_t loc) {
-  // Get the position, in the current line of text, of the diagnostics pointer.
-  // ('loc' is the location of the start of the current token/error within the
-  // overall text line).
-  int32_t arrow = loc + 1; // Column offset starts at 1, not 0.
-
-  return llvm::formatv("<expr:1:{0}>: {1}\n{2}\n{3}", loc + 1, message,
-                       llvm::fmt_pad(text, 0, 0),
-                       llvm::fmt_pad("^", arrow - 1, 0));
+DILDiagnosticError::DILDiagnosticError(llvm::StringRef expr,
+                                       const std::string &message, uint32_t loc,
+                                       uint16_t err_len)
+    : ErrorInfo(make_error_code(std::errc::invalid_argument)) {
+  DiagnosticDetail::SourceLocation sloc = {
+      FileSpec{}, /*line=*/1, static_cast<uint16_t>(loc + 1),
+      err_len,    false,      /*in_user_input=*/true};
+  std::string spaces(loc, ' ');
+  std::string rendered_msg =
+      llvm::formatv("<user expression 0>:1:{0}: {1}\n   1 | {2}\n     | {3}^",
+                    loc + 1, message, expr, spaces);
+  m_detail.source_location = sloc;
+  m_detail.severity = lldb::eSeverityError;
+  m_detail.message = message;
+  m_detail.rendered = std::move(rendered_msg);
 }
 
 llvm::Expected<ASTNodeUP>
@@ -768,22 +774,29 @@ DILParser::Parse(llvm::StringRef dil_input_expr, DILLexer lexer,
                  std::shared_ptr<StackFrame> frame_sp,
                  lldb::DynamicValueType use_dynamic, bool use_synthetic,
                  bool fragile_ivar, bool check_ptr_vs_member) {
-  Status error;
+  llvm::Error error = llvm::Error::success();
   DILParser parser(dil_input_expr, lexer, frame_sp, use_dynamic, use_synthetic,
                    fragile_ivar, check_ptr_vs_member, error);
-  return parser.Run();
+
+  ASTNodeUP node_up = parser.Run();
+
+  if (error)
+    return error;
+
+  return node_up;
 }
 
 DILParser::DILParser(llvm::StringRef dil_input_expr, DILLexer lexer,
                      std::shared_ptr<StackFrame> frame_sp,
                      lldb::DynamicValueType use_dynamic, bool use_synthetic,
-                     bool fragile_ivar, bool check_ptr_vs_member, Status &error)
-    : m_ctx_scope(frame_sp), m_input_expr(dil_input_expr), m_dil_lexer(lexer),
-      m_error(error), m_use_dynamic(use_dynamic),
+                     bool fragile_ivar, bool check_ptr_vs_member,
+                     llvm::Error &error)
+    : m_ctx_scope(frame_sp), m_input_expr(dil_input_expr),
+      m_dil_lexer(std::move(lexer)), m_error(error), m_use_dynamic(use_dynamic),
       m_use_synthetic(use_synthetic), m_fragile_ivar(fragile_ivar),
       m_check_ptr_vs_member(check_ptr_vs_member) {}
 
-llvm::Expected<ASTNodeUP> DILParser::Run() {
+ASTNodeUP DILParser::Run() {
   ASTNodeUP expr;
 
   if (m_dil_lexer.IsStringLiteral(CurToken().GetKind()) &&
@@ -795,10 +808,6 @@ llvm::Expected<ASTNodeUP> DILParser::Run() {
   }
 
   Expect(Token::eof);
-
-  // Check for any parsing errors.
-  if (m_error.Fail())
-    return m_error.ToError();
 
   return expr;
 }
@@ -812,11 +821,10 @@ CompilerType DILParser::ResolveTypeDeclarators(
     if (tk == Token::star) {
       // Pointers to reference types are forbidden.
       if (type.IsReferenceType()) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv("'type name' declared as a pointer to a "
+        BailOut(llvm::formatv("'type name' declared as a pointer to a "
                               "reference of type {0}",
                               type.TypeDescription()),
-                loc);
+                loc, type.TypeDescription().length());
         return bad_type;
       }
       // Get pointer type for the base type: e.g. int* -> int**.
@@ -825,8 +833,8 @@ CompilerType DILParser::ResolveTypeDeclarators(
     } else if (tk == Token::amp) {
       // References to references are forbidden.
       if (type.IsReferenceType()) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                "type name declared as a reference to a reference", loc);
+        BailOut("type name declared as a reference to a reference", loc,
+                type.TypeDescription().length());
         return bad_type;
       }
       // Get reference type for the base type: e.g. int -> int&.
@@ -866,9 +874,8 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       // "int" can have signedness and be combined with "short", "long" and
       // "long long" (but not with another "int").
       if (type_decl->m_has_int_specifier) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                "cannot combine with previous 'int' declaration specifier",
-                loc);
+        BailOut("cannot combine with previous 'int' declaration specifier", loc,
+                CurToken().GetSpelling().length());
         return false;
       }
       if (type_spec == TypeSpecifier::kShort ||
@@ -881,11 +888,10 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
         type_decl->m_has_int_specifier = true;
         return true;
       }
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv(
+      BailOut(llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
                   type_spec),
-              loc);
+              loc, CurToken().GetSpelling().length());
       return false;
     }
 
@@ -903,11 +909,10 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
         type_decl->m_type_specifier = TypeSpecifier::kLongDouble;
         return true;
       }
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv(
+      BailOut(llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
                   type_spec),
-              loc);
+              loc, CurToken().GetSpelling().length());
       return false;
     }
 
@@ -918,11 +923,10 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
         type_decl->m_type_specifier = TypeSpecifier::kShort;
         return true;
       }
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv(
+      BailOut(llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
                   type_spec),
-              loc);
+              loc, CurToken().GetSpelling().length());
       return false;
     }
 
@@ -933,11 +937,10 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
         type_decl->m_type_specifier = TypeSpecifier::kChar;
         return true;
       }
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv(
+      BailOut(llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
                   type_spec),
-              loc);
+              loc, CurToken().GetSpelling().length());
       return false;
     }
 
@@ -945,8 +948,8 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       // "double" can be combined with "long" to form "long double", but it
       // cannot be combined with signedness specifier.
       if (type_decl->m_sign_specifier != SignSpecifier::kUnknown) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                "'double' cannot be signed or unsigned", loc);
+        BailOut("'double' cannot be signed or unsigned", loc,
+                CurToken().GetSpelling().length());
         return false;
       }
       if (type_spec == TypeSpecifier::kUnknown) {
@@ -956,11 +959,10 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
         type_decl->m_type_specifier = TypeSpecifier::kLongDouble;
         return true;
       }
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv(
+      BailOut(llvm::formatv(
                   "cannot combine with previous '{0}' declaration specifier",
                   type_spec),
-              loc);
+              loc, CurToken().GetSpelling().length());
       return false;
     }
 
@@ -973,18 +975,16 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       // These types cannot have signedness or be combined with any other type
       // specifiers.
       if (type_decl->m_sign_specifier != SignSpecifier::kUnknown) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv("'{0}' cannot be signed or unsigned",
+        BailOut(llvm::formatv("'{0}' cannot be signed or unsigned",
                               ToTypeSpecifier(kind)),
-                loc);
+                loc, CurToken().GetSpelling().length());
         return false;
       }
       if (type_spec != TypeSpecifier::kUnknown) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv(
+        BailOut(llvm::formatv(
                     "cannot combine with previous '{0}' declaration specifier",
                     type_spec),
-                loc);
+                loc, CurToken().GetSpelling().length());
       }
       type_decl->m_type_specifier = ToTypeSpecifier(kind);
       return true;
@@ -995,11 +995,10 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
       // "signed" and "unsigned" cannot be combined with another signedness
       // specifier.
       if (type_decl->m_sign_specifier != SignSpecifier::kUnknown) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv(
+        BailOut(llvm::formatv(
                     "cannot combine with previous '{0}' declaration specifier",
                     type_decl->m_sign_specifier),
-                loc);
+                loc, CurToken().GetSpelling().length());
         return false;
       }
       if (type_spec == TypeSpecifier::kVoid ||
@@ -1010,9 +1009,8 @@ bool DILParser::HandleSimpleTypeSpecifier(TypeDeclaration* type_decl) {
           type_spec == TypeSpecifier::kWChar ||
           type_spec == TypeSpecifier::kChar16 ||
           type_spec == TypeSpecifier::kChar32) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv("'{0}' cannot be signed or unsigned", type_spec),
-                loc);
+        BailOut(llvm::formatv("'{0}' cannot be signed or unsigned", type_spec),
+                loc, CurToken().GetSpelling().length());
         return false;
       }
 
@@ -1041,10 +1039,9 @@ ASTNodeUP DILParser::ParseStringLiteral() {
 
   if (string_literal.hadError) {
     // TODO: Use ErrorCode::kInvalidStringLiteral in the future.
-    BailOut(ErrorCode::kInvalidNumericLiteral,
-            llvm::formatv("Failed to parse token as string-literal: {0}",
+    BailOut(llvm::formatv("Failed to parse token as string-literal: {0}",
                           CurToken()),
-            loc);
+            loc, CurToken().GetSpelling().length());
     return std::make_unique<ErrorNode>();
   }
 
@@ -1520,8 +1517,8 @@ ASTNodeUP DILParser::ParsePostfixExpression() {
     // Parse the type definition and resolve the type.
     auto type_id = ParseTypeId(/*must_be_type_id*/ true);
     if (!type_id) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              "type name requires a specifier or qualifier", loc);
+      BailOut("type name requires a specifier or qualifier", loc,
+              CurToken().GetSpelling().length());
       return std::make_unique<ErrorNode>();
     }
     if (!type_id.value().IsValid()) {
@@ -1558,9 +1555,8 @@ ASTNodeUP DILParser::ParsePostfixExpression() {
         if (CurToken().Is(Token::l_paren)) {
           // TODO: Check if `member_id` is actually a member function of `lhs`.
           // If not, produce a more accurate diagnostic.
-          BailOut(ErrorCode::kNotImplemented,
-                  "member function calls are not supported",
-                  CurToken().GetLocation());
+          BailOut("member function calls are not supported",
+                  CurToken().GetLocation(), CurToken().GetSpelling().length());
         }
         lhs = BuildMemberOf(std::move(lhs), std::move(member_id),
                             token.GetKind() == Token::arrow,
@@ -1618,8 +1614,8 @@ ASTNodeUP DILParser::ParsePrimaryExpression() {
   } else if (m_dil_lexer.IsStringLiteral(CurToken().GetKind())) {
     // Note: Only expressions that consist of a single string literal can be
     // handled by DIL.
-    BailOut(ErrorCode::kNotImplemented, "string literals are not supported",
-            CurToken().GetLocation());
+    BailOut("string literals are not supported", CurToken().GetLocation(),
+            CurToken().GetSpelling().length());
     return std::make_unique<ErrorNode>();
   } else if (CurToken().Is(Token::kw_nullptr)) {
     return ParsePointerLiteral();
@@ -1632,10 +1628,9 @@ ASTNodeUP DILParser::ParsePrimaryExpression() {
       auto func_def = GetBuiltinFunctionDef(m_ctx_scope, identifier);
       if (!func_def) {
         BailOut(
-            ErrorCode::kNotImplemented,
             llvm::formatv("function '{0}' is not a supported builtin intrinsic",
                           identifier),
-            loc);
+            loc, identifier.length());
         return std::make_unique<ErrorNode>();
       }
       return ParseBuiltinFunction(loc, std::move(func_def));
@@ -1650,14 +1645,13 @@ ASTNodeUP DILParser::ParsePrimaryExpression() {
                                      m_use_dynamic, nullptr);
 
     if (!value) {
-      BailOut(ErrorCode::kUndeclaredIdentifier,
-              llvm::formatv("use of undeclared identifier '{0}'", identifier),
-              loc);
+      BailOut(llvm::formatv("use of undeclared identifier '{0}'", identifier),
+              loc, identifier.length());
       return std::make_unique<ErrorNode>();
     }
-    return std::make_unique<IdentifierNode>(
-        loc, identifier, m_use_dynamic, std::move(value),
-        /*is_rvalue*/ false, IsContextVar(identifier));
+    return std::make_unique<IdentifierNode>(loc, identifier, std::move(value),
+                                            /*is_rvalue*/ false,
+                                            IsContextVar(identifier));
   } else if (CurToken().Is(Token::l_paren)) {
     // Check in case this is an anonynmous namespace
     if (m_dil_lexer.LookAhead(1).Is(Token::identifier)
@@ -1689,14 +1683,13 @@ ASTNodeUP DILParser::ParsePrimaryExpression() {
                                        m_ctx_scope->CalculateTarget(),
                                        m_use_dynamic);
       if (!value) {
-        BailOut(ErrorCode::kUndeclaredIdentifier,
-                llvm::formatv("use of undeclared identifier '{0}'", identifier),
-                loc);
+        BailOut(llvm::formatv("use of undeclared identifier '{0}'", identifier),
+                loc, identifier.length());
         return std::make_unique<ErrorNode>();
       }
-      return std::make_unique<IdentifierNode>(
-          loc, identifier, m_use_dynamic, std::move(value),
-          /* is_rvalue */ false, IsContextVar(identifier));
+      return std::make_unique<IdentifierNode>(loc, identifier, std::move(value),
+                                              /* is_rvalue */ false,
+                                              IsContextVar(identifier));
     } else {
       m_dil_lexer.Advance();
       auto expr = ParseExpression();
@@ -1706,9 +1699,8 @@ ASTNodeUP DILParser::ParsePrimaryExpression() {
     }
   }
 
-  BailOut(ErrorCode::kInvalidExpressionSyntax,
-          llvm::formatv("Unexpected token: {0}", CurToken()),
-          CurToken().GetLocation());
+  BailOut(llvm::formatv("Unexpected token: {0}", CurToken()),
+          CurToken().GetLocation(), CurToken().GetSpelling().length());
   return std::make_unique<ErrorNode>();
 }
 
@@ -1756,10 +1748,8 @@ std::optional<CompilerType> DILParser::ParseTypeId(bool must_be_type_id) {
     if (!type.IsValid()) {
       if (must_be_type_id) {
         BailOut(
-            ErrorCode::kUndeclaredIdentifier,
-            llvm::formatv("unknown type name '{0}'",
-                          type_decl.m_user_typename),
-            type_loc);
+            llvm::formatv("unknown type name '{0}'", type_decl.m_user_typename),
+            type_loc, type_decl.m_user_typename.length());
         return bad_type;
       }
       return {};
@@ -1770,11 +1760,10 @@ std::optional<CompilerType> DILParser::ParseTypeId(bool must_be_type_id) {
       // Same-name identifiers should be preferred over typenames.
       // TODO: Make type accessible with 'class', 'struct' and 'union' keywords.
       if (must_be_type_id) {
-        BailOut(ErrorCode::kUndeclaredIdentifier,
-                llvm::formatv(
+        BailOut(llvm::formatv(
                     "must use '{0}' tag to refer to type '{1}' in this scope",
                     type.GetTypeTag(), type_decl.m_user_typename),
-                type_loc);
+                type_loc, type_decl.m_user_typename.length());
         return bad_type;
       }
       return {};
@@ -1785,11 +1774,10 @@ std::optional<CompilerType> DILParser::ParseTypeId(bool must_be_type_id) {
       // Same-name identifiers should be preferred over typenames.
       // TODO: Make type accessible with 'class', 'struct' and 'union' keywords.
       if (must_be_type_id) {
-        BailOut(ErrorCode::kUndeclaredIdentifier,
-                llvm::formatv(
+        BailOut(llvm::formatv(
                     "must use '{0}' tag to refer to type '{1}' in this scope",
                     type.GetTypeTag(), type_decl.m_user_typename),
-                type_loc);
+                type_loc, type_decl.m_user_typename.length());
         return bad_type;
       }
       return {};
@@ -1857,9 +1845,8 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
   if (IsSimpleTypeSpecifierKeyword(CurToken())) {
     // User-defined typenames can't be combined with builtin keywords.
     if (type_decl->m_is_user_type) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              "cannot combine with previous declaration specifier",
-              CurToken().GetLocation());
+      BailOut("cannot combine with previous declaration specifier",
+              CurToken().GetLocation(), CurToken().GetSpelling().length());
       type_decl->m_has_error = true;
       return false;
     }
@@ -1889,10 +1876,10 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
     uint32_t loc = CurToken().GetLocation();
 
     // Try parsing optional nested_name_specifier.
-    auto nested_name_specifier = ParseNestedNameSpecifier();
+    std::string nested_name_specifier = ParseNestedNameSpecifier();
 
     // Try parsing required type_name.
-    auto type_name = ParseTypeName();
+    std::string type_name = ParseTypeName();
 
     // If there is a type_name, then this is indeed a simple_type_specifier.
     // Global and qualified (namespace/class) scopes can be empty, since they're
@@ -1900,15 +1887,14 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
     if (!type_name.empty()) {
       // User-defined typenames can't be combined with builtin keywords.
       if (type_decl->m_is_builtin) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                "cannot combine with previous declaration specifier", loc);
+        BailOut("cannot combine with previous declaration specifier", loc, 1);
         type_decl->m_has_error = true;
         return false;
       }
       // There should be only one user-defined typename.
       if (type_decl->m_is_user_type) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                "two or more data types in declaration of 'type name'", loc);
+        BailOut("two or more data types in declaration of 'type name'", loc,
+                type_decl->m_user_typename.length());
         type_decl->m_has_error = true;
         return false;
       }
@@ -1937,22 +1923,20 @@ bool DILParser::ParseTypeSpecifier(TypeDeclaration* type_decl) {
 std::string DILParser::ParseNestedNameSpecifier() {
   // The first token in nested_name_specifier is always an identifier, or
   // '(anonymous namespace)'.
-  if (CurToken().IsNot(Token::identifier) && CurToken().IsNot(Token::l_paren)) {
-    return "";
-  }
+  switch (CurToken().GetKind()) {
+  case Token::l_paren: {
+    // Anonymous namespaces need to be treated specially: They are
+    // represented the the string '(anonymous namespace)', which has a space
+    // in it (throwing  off normal parsing) and is not actually proper C++>
+    // Check to see if we're looking at '(anonymous namespace)::...'
 
-  // Anonymous namespaces need to be treated specially: They are represented
-  // the the string '(anonymous namespace)', which has a space in it (throwing
-  // off normal parsing) and is not actually proper C++> Check to see if we're
-  // looking at '(anonymous namespace)::...'
-  if (CurToken().Is(Token::l_paren)) {
     // Look for all the pieces, in order:
     // l_paren 'anonymous' 'namespace' r_paren coloncolon
-    if (m_dil_lexer.LookAhead(1).Is(Token::identifier)
-        && (((Token)m_dil_lexer.LookAhead(1)).GetSpelling() == "anonymous")
-        && m_dil_lexer.LookAhead(2).Is(Token::kw_namespace)
-        && m_dil_lexer.LookAhead(3).Is(Token::r_paren)
-        && m_dil_lexer.LookAhead(4).Is(Token::coloncolon)) {
+    if (m_dil_lexer.LookAhead(1).Is(Token::identifier) &&
+        (m_dil_lexer.LookAhead(1).GetSpelling() == "anonymous") &&
+        m_dil_lexer.LookAhead(2).Is(Token::kw_namespace) &&
+        m_dil_lexer.LookAhead(3).Is(Token::r_paren) &&
+        m_dil_lexer.LookAhead(4).Is(Token::coloncolon)) {
       m_dil_lexer.Advance(4);
 
       assert(
@@ -1966,51 +1950,54 @@ std::string DILParser::ParseNestedNameSpecifier() {
         m_dil_lexer.Advance();
       }
       return "(anonymous namespace)::" + identifier2;
-    } else {
-      return "";
     }
+    return "";
   } // end of special handling for '(anonymous namespace)'
-
-  // If the next token is scope ("::"), then this is indeed a
-  // nested_name_specifier
-  if (m_dil_lexer.LookAhead(1).Is(Token::coloncolon)) {
-    // This nested_name_specifier is a single identifier.
-    std::string identifier = CurToken().GetSpelling();
-    m_dil_lexer.Advance(1);
-    Expect(Token::coloncolon);
-    m_dil_lexer.Advance();
-    // Continue parsing the nested_name_specifier.
-    return identifier + "::" + ParseNestedNameSpecifier();
-  }
-
-  // If the next token starts a template argument list, then we have a
-  // simple_template_id here.
-  if (m_dil_lexer.LookAhead(1).Is(Token::less)) {
-    // We don't know whether this will be a nested_name_identifier or just a
-    // type_name. Prepare to rollback if this is not a nested_name_identifier.
-
-    // Start tentative parsing (save token location/idx, for possible rollback).
-    uint32_t save_token_idx = m_dil_lexer.GetCurrentTokenIdx();
-
-    // TODO: Parse just the simple_template_id?
-    auto type_name = ParseTypeName();
-
-    // If we did parse the type_name successfully and it's followed by the scope
-    // operator ("::"), then this is indeed a nested_name_specifier. Continue
-    // parsing nested_name_specifier.
-    if (!type_name.empty() && CurToken().Is(Token::coloncolon)) {
+  case Token::identifier: {
+    // If the next token is scope ("::"), then this is indeed a
+    // nested_name_specifier
+    if (m_dil_lexer.LookAhead(1).Is(Token::coloncolon)) {
+      // This nested_name_specifier is a single identifier.
+      std::string identifier = CurToken().GetSpelling();
+      m_dil_lexer.Advance(1);
+      Expect(Token::coloncolon);
       m_dil_lexer.Advance();
       // Continue parsing the nested_name_specifier.
-      return type_name + "::" + ParseNestedNameSpecifier();
+      return identifier + "::" + ParseNestedNameSpecifier();
     }
 
-    // Not a nested_name_specifier, but could be just a type_name or something
-    // else entirely. Rollback the parser and try a different path.
+    // If the next token starts a template argument list, then we have a
+    // simple_template_id here.
+    if (m_dil_lexer.LookAhead(1).Is(Token::less)) {
+      // We don't know whether this will be a nested_name_identifier or just
+      // a type_name. Prepare to rollback if this is not a
+      // nested_name_identifier.
 
-    TentativeParsingRollback(save_token_idx);
+      // Start tentative parsing (save token location/idx, for possible
+      // rollback).
+      uint32_t save_token_idx = m_dil_lexer.GetCurrentTokenIdx();
+
+      // TODO: Parse just the simple_template_id?
+      std::string type_name = ParseTypeName();
+
+      // If we did parse the type_name successfully and it's followed by the
+      // scope parsing nested_name_specifier.
+      if (!type_name.empty() && CurToken().Is(Token::coloncolon)) {
+        m_dil_lexer.Advance();
+        // Continue parsing the nested_name_specifier.
+        return type_name + "::" + ParseNestedNameSpecifier();
+      }
+
+      // Not a nested_name_specifier, but could be just a type_name or
+      // something else entirely. Rollback the parser and try a different
+      // path.
+      TentativeParsingRollback(save_token_idx);
+    }
+    return "";
   }
-
-  return "";
+  default:
+    return "";
+  }
 }
 
 // Parse a type_name.
@@ -2265,7 +2252,7 @@ std::string DILParser::ParseIdExpression() {
   }
 
   // Try parsing optional nested_name_specifier.
-  auto nested_name_specifier = ParseNestedNameSpecifier();
+  std::string nested_name_specifier = ParseNestedNameSpecifier();
 
   // If nested_name_specifier is present, then it's qualified_id production.
   // Follow the first production rule.
@@ -2348,10 +2335,9 @@ ASTNodeUP DILParser::ParseCharLiteral() {
 
   if (char_literal.hadError()) {
     // TODO: Add new ErrorCode kInvalidCharLiteral and use it
-    BailOut(ErrorCode::kInvalidNumericLiteral,
-            llvm::formatv("Failed to parse token as char-constant: {0}",
+    BailOut(llvm::formatv("Failed to parse token as char-constant: {0}",
                           CurToken()),
-            CurToken().GetLocation());
+            CurToken().GetLocation(), CurToken().GetSpelling().length());
     CompilerType bad_type;
     return std::make_unique<ErrorNode>();
   }
@@ -2395,10 +2381,9 @@ ASTNodeUP DILParser::ParseNumericConstant() {
                                     /*AllowMicrosoftExt=*/true);
 
   if (literal.hadError) {
-    BailOut(ErrorCode::kInvalidNumericLiteral,
-            llvm::formatv("Failed to parse token as numeric-constant: {0}",
+    BailOut(llvm::formatv("Failed to parse token as numeric-constant: {0}",
                           CurToken()),
-            CurToken().GetLocation());
+            CurToken().GetLocation(), CurToken().GetSpelling().length());
     return std::make_unique<ErrorNode>();
   }
 
@@ -2413,11 +2398,10 @@ ASTNodeUP DILParser::ParseNumericConstant() {
   }
 
   // Don't care about anything else.
-  BailOut(ErrorCode::kInvalidNumericLiteral,
-          llvm::formatv(
+  BailOut(llvm::formatv(
               "numeric-constant should be either float or integer literal: {0}",
               CurToken()),
-          CurToken().GetLocation());
+          CurToken().GetLocation(), CurToken().GetSpelling().length());
   return std::make_unique<ErrorNode>();
 }
 
@@ -2434,9 +2418,8 @@ ASTNodeUP DILParser::ParseFloatingLiteral(dil::NumericLiteralParser &literal,
   // underflowed to zero (APFloat reports denormals as underflow).
   if ((result & llvm::APFloat::opOverflow) ||
       ((result & llvm::APFloat::opUnderflow) && raw_value.isZero())) {
-    BailOut(ErrorCode::kInvalidNumericLiteral,
-            llvm::formatv("float underflow/overflow happened: {0}", token),
-            token.GetLocation());
+    BailOut(llvm::formatv("float underflow/overflow happened: {0}", token),
+            token.GetLocation(), token.GetSpelling().length());
     CompilerType bad_type;
     return std::make_unique<ErrorNode>();
   }
@@ -2454,11 +2437,10 @@ ASTNodeUP DILParser::ParseIntegerLiteral(dil::NumericLiteralParser &literal,
   llvm::APInt raw_value(type_width<uintmax_t>(), 0);
 
   if (literal.GetIntegerValue(raw_value)) {
-    BailOut(ErrorCode::kInvalidNumericLiteral,
-            llvm::formatv("integer literal is too large to be represented in "
+    BailOut(llvm::formatv("integer literal is too large to be represented in "
                           "any integer type: {0}",
                           token),
-            token.GetLocation());
+            token.GetLocation(), token.GetSpelling().length());
     CompilerType bad_type;
     return std::make_unique<ErrorNode>();
   }
@@ -2522,13 +2504,12 @@ DILParser::ParseBuiltinFunction(uint32_t loc,
 
   // Check we have the correct number of arguments.
   if (arguments.size() != func_def->m_arguments.size()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv(
-                "no matching function for call to '{0}': requires {1} "
-                "argument(s), but {2} argument(s) were provided",
-                func_def->m_name, func_def->m_arguments.size(),
-                arguments.size()),
-            loc);
+    BailOut(
+        llvm::formatv("no matching function for call to '{0}': requires {1} "
+                      "argument(s), but {2} argument(s) were provided",
+                      func_def->m_name, func_def->m_arguments.size(),
+                      arguments.size()),
+        loc, 1);
     return std::make_unique<ErrorNode>();
   }
 
@@ -2571,11 +2552,10 @@ ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
     if (rhs_type.IsPointerType() || rhs_type.IsNullPtrType()) {
       // C-style cast from pointer to float/double is not allowed.
       if (type.IsFloat()) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv("C-style cast from {0} to {1} is not allowed",
+        BailOut(llvm::formatv("C-style cast from {0} to {1} is not allowed",
                               rhs_type.TypeDescription(),
                               type.TypeDescription()),
-                location);
+                location, type.TypeDescription().length());
         return std::make_unique<ErrorNode>();
       }
       // Casting pointer to bool is valid. Otherwise check if the result type
@@ -2587,20 +2567,18 @@ ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
       if (auto temp = rhs_type.GetByteSize(m_ctx_scope.get()))
         rhs_type_byte_size = temp.value();
       if (!type.IsBoolean() && type_byte_size < rhs_type_byte_size) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv(
+        BailOut(llvm::formatv(
                     "cast from pointer to smaller type {0} loses information",
                     type.TypeDescription()),
-                location);
+                location, type.TypeDescription().length());
         return std::make_unique<ErrorNode>();
       }
     } else if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
       // Otherwise accept only arithmetic types and enums.
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv(
+      BailOut(llvm::formatv(
                   "cannot convert {0} to {1} without a conversion operator",
                   rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
     promo_kind = TypePromotionCastKind::eArithmetic;
@@ -2608,10 +2586,9 @@ ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
   } else if (type.IsEnumerationType()) {
     // Cast to enum type.
     if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("C-style cast from {0} to {1} is not allowed",
+      BailOut(llvm::formatv("C-style cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
     cast_kind = CStyleCastKind::eEnumeration;
@@ -2621,10 +2598,9 @@ ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
     if (!rhs_type.IsInteger() && !rhs_type.IsEnumerationType() &&
         !rhs_type.IsArrayType() && !rhs_type.IsPointerType() &&
         !rhs_type.IsNullPtrType()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("cannot cast from type {0} to pointer type {1}",
+      BailOut(llvm::formatv("cannot cast from type {0} to pointer type {1}",
                             rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
     promo_kind = TypePromotionCastKind::ePointer;
@@ -2632,10 +2608,9 @@ ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
   } else if (type.IsNullPtrType()) {
     // Cast to nullptr type.
     if (!rhs_type.IsNullPtrType() && !rhs->is_literal_zero()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("C-style cast from {0} to {1} is not allowed",
+      BailOut(llvm::formatv("C-style cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
     cast_kind = CStyleCastKind::eNullptr;
@@ -2643,20 +2618,18 @@ ASTNodeUP DILParser::BuildCStyleCast(CompilerType type, ASTNodeUP rhs,
   } else if (type.IsReferenceType()) {
     // Cast to a reference type.
     if (rhs->is_rvalue()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("C-style cast from rvalue to reference type {0}",
+      BailOut(llvm::formatv("C-style cast from rvalue to reference type {0}",
                             type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
     cast_kind = CStyleCastKind::eReference;
 
   } else {
     // Unsupported cast.
-    BailOut(ErrorCode::kNotImplemented,
-            llvm::formatv("casting of {0} to {1} is not implemented yet",
+    BailOut(llvm::formatv("casting of {0} to {1} is not implemented yet",
                           rhs_type.TypeDescription(), type.TypeDescription()),
-            location);
+            location, type.TypeDescription().length());
     return std::make_unique<ErrorNode>();
   }
 
@@ -2714,10 +2687,9 @@ ASTNodeUP DILParser::BuildCxxStaticCast(CompilerType type, ASTNodeUP rhs,
   }
 
   // Unsupported cast.
-  BailOut(ErrorCode::kNotImplemented,
-          llvm::formatv("casting of {0} to {1} is not implemented yet",
+  BailOut(llvm::formatv("casting of {0} to {1} is not implemented yet",
                         rhs_type.TypeDescription(), type.TypeDescription()),
-          location);
+          location, type.TypeDescription().length());
   CompilerType bad_type;
   return std::make_unique<ErrorNode>();
 }
@@ -2731,19 +2703,17 @@ ASTNodeUP DILParser::BuildCxxStaticCastToScalar(CompilerType type,
   if (rhs_type.IsPointerType() || rhs_type.IsNullPtrType()) {
     // Pointers can be casted to bools.
     if (!type.IsBoolean()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("static_cast from {0} to {1} is not allowed",
+      BailOut(llvm::formatv("static_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
   } else if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
     // Otherwise accept only arithmetic types and enums.
     BailOut(
-        ErrorCode::kInvalidOperandType,
         llvm::formatv("cannot convert {0} to {1} without a conversion operator",
                       rhs_type.TypeDescription(), type.TypeDescription()),
-        location);
+        location, type.TypeDescription().length());
     return std::make_unique<ErrorNode>();
   }
 
@@ -2757,10 +2727,9 @@ ASTNodeUP DILParser::BuildCxxStaticCastToEnum(CompilerType type, ASTNodeUP rhs,
   auto rhs_type = rhs->GetDereferencedResultType();
 
   if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("static_cast from {0} to {1} is not allowed",
+    BailOut(llvm::formatv("static_cast from {0} to {1} is not allowed",
                           rhs_type.TypeDescription(), type.TypeDescription()),
-            location);
+            location, type.TypeDescription().length());
     CompilerType bad_type;
     return std::make_unique<ErrorNode>();
   }
@@ -2786,17 +2755,15 @@ ASTNodeUP DILParser::BuildCxxStaticCastToPointer(CompilerType type,
     }
 
     if (!type.IsPointerToVoid() && !rhs_type.IsPointerToVoid()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("static_cast from {0} to {1} is not allowed",
+      BailOut(llvm::formatv("static_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
   } else if (!rhs_type.IsNullPtrType() && !rhs->is_literal_zero()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("cannot cast from type {0} to pointer type '{1}'",
+    BailOut(llvm::formatv("cannot cast from type {0} to pointer type '{1}'",
                           rhs_type.TypeDescription(), type.TypeDescription()),
-            location);
+            location, type.TypeDescription().length());
     return std::make_unique<ErrorNode>();
   }
 
@@ -2811,10 +2778,9 @@ ASTNodeUP DILParser::BuildCxxStaticCastToNullPtr(CompilerType type,
   auto rhs_type = rhs->GetDereferencedResultType();
 
   if (!rhs_type.IsNullPtrType() && !rhs->is_literal_zero()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("static_cast from {0} to {1} is not allowed",
+    BailOut(llvm::formatv("static_cast from {0} to {1} is not allowed",
                           rhs_type.TypeDescription(), type.TypeDescription()),
-            location);
+            location, type.TypeDescription().length());
     CompilerType bad_type;
     return std::make_unique<ErrorNode>();
   }
@@ -2832,11 +2798,10 @@ ASTNodeUP DILParser::BuildCxxStaticCastToReference(CompilerType type,
   auto type_deref = type.GetNonReferenceType();
 
   if (rhs->is_rvalue()) {
-    BailOut(ErrorCode::kNotImplemented,
-            llvm::formatv("static_cast from rvalue of type {0} to reference "
+    BailOut(llvm::formatv("static_cast from rvalue of type {0} to reference "
                           "type {1} is not implemented yet",
                           rhs_type.TypeDescription(), type.TypeDescription()),
-            location);
+            location, type.TypeDescription().length());
     return std::make_unique<ErrorNode>();
   }
 
@@ -2850,10 +2815,9 @@ ASTNodeUP DILParser::BuildCxxStaticCastToReference(CompilerType type,
     return BuildCxxStaticCastForInheritedTypes(type, std::move(rhs), location);
   }
 
-  BailOut(ErrorCode::kNotImplemented,
-          llvm::formatv("static_cast from {0} to {1} is not implemented yet",
+  BailOut(llvm::formatv("static_cast from {0} to {1} is not implemented yet",
                         rhs_type.TypeDescription(), type.TypeDescription()),
-          location);
+          location, type.TypeDescription().length());
   return std::make_unique<ErrorNode>();
 }
 
@@ -2900,11 +2864,10 @@ ASTNodeUP DILParser::BuildCxxStaticCastForInheritedTypes(CompilerType type,
       // Base-to-derived conversion isn't possible for virtually inherited
       // types (either directly or indirectly).
       assert(virtual_base.IsValid() && "virtual base should be valid");
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("cannot cast {0} to {1} via virtual base {2}",
+      BailOut(llvm::formatv("cannot cast {0} to {1} via virtual base {2}",
                             rhs_type.TypeDescription(), type.TypeDescription(),
                             virtual_base.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
 
@@ -2912,11 +2875,10 @@ ASTNodeUP DILParser::BuildCxxStaticCastForInheritedTypes(CompilerType type,
                                                offset, is_rvalue);
   }
 
-  BailOut(ErrorCode::kInvalidOperandType,
-          llvm::formatv("static_cast from {0} to {1}, which are not "
+  BailOut(llvm::formatv("static_cast from {0} to {1}, which are not "
                         "related by inheritance, is not allowed",
                         rhs_type.TypeDescription(), type.TypeDescription()),
-          location);
+          location, type.TypeDescription().length());
   return std::make_unique<ErrorNode>();
 }
 
@@ -2929,10 +2891,9 @@ ASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
   if (type.IsScalarType()) {
     // reinterpret_cast doesn't support non-integral scalar types.
     if (!type.IsInteger()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+      BailOut(llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
 
@@ -2952,11 +2913,10 @@ ASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
       if (auto temp = rhs_type.GetByteSize(m_ctx_scope.get()))
         rhs_type_byte_size = temp.value();
       if (type_byte_size < rhs_type_byte_size) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv(
+        BailOut(llvm::formatv(
                     "cast from pointer to smaller type {0} loses information",
                     type.TypeDescription()),
-                location);
+                location, type.TypeDescription().length());
         return std::make_unique<ErrorNode>();
       }
     } else if (type.IsTypedefType() || rhs_type.IsTypedefType()) {
@@ -2966,18 +2926,17 @@ ASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
                                    rhs_type.GetTypedefedType() : rhs_type;
       if (!base_type.CompareTypes(rhs_base_type)) {
         // Integral type can be converted to its own type.
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
-                              rhs_type.TypeDescription(), type.TypeDescription()),
-                location);
+        BailOut(llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+                              rhs_type.TypeDescription(),
+                              type.TypeDescription()),
+                location, type.TypeDescription().length());
         return std::make_unique<ErrorNode>();
       }
     } else if (!type.CompareTypes(rhs_type)) {
       // Integral type can be converted to its own type.
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+      BailOut(llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
   } else if (type.IsEnumerationType()) {
@@ -2987,10 +2946,9 @@ ASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
     CompilerType rhs_base_type = rhs_type.IsTypedefType() ?
                                  rhs_type.GetTypedefedType() : rhs_type;
     if (!base_type.CompareTypes(rhs_base_type)) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+      BailOut(llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
 
@@ -3000,29 +2958,26 @@ ASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
     // TODO: Implement an explicit node for array-to-pointer conversions.
     if (!rhs_type.IsInteger() && !rhs_type.IsEnumerationType() &&
         !rhs_type.IsArrayType() && !rhs_type.IsPointerType()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+      BailOut(llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                             rhs_type.TypeDescription(), type.TypeDescription()),
-              location);
+              location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
 
   } else if (type.IsNullPtrType()) {
     // reinterpret_cast to nullptr_t isn't allowed (even for nullptr_t).
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+    BailOut(llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
                           rhs_type.TypeDescription(), type.TypeDescription()),
-            location);
+            location, type.TypeDescription().length());
     return std::make_unique<ErrorNode>();
 
   } else if (type.IsReferenceType()) {
     // L-values can be converted to any reference type.
     if (rhs->is_rvalue()) {
       BailOut(
-          ErrorCode::kInvalidOperandType,
           llvm::formatv("reinterpret_cast from rvalue to reference type {0}",
                         type.TypeDescription()),
-          location);
+          location, type.TypeDescription().length());
       return std::make_unique<ErrorNode>();
     }
     // Casting to reference types gives an L-value result.
@@ -3030,10 +2985,9 @@ ASTNodeUP DILParser::BuildCxxReinterpretCast(CompilerType type, ASTNodeUP rhs,
 
   } else {
     // Unsupported cast.
-    BailOut(ErrorCode::kNotImplemented,
-            llvm::formatv("casting of {0} to {1} is not implemented yet",
+    BailOut(llvm::formatv("casting of {0} to {1} is not implemented yet",
                           rhs_type.TypeDescription(), type.TypeDescription()),
-            location);
+            location, type.TypeDescription().length());
     return std::make_unique<ErrorNode>();
   }
 
@@ -3052,19 +3006,17 @@ ASTNodeUP DILParser::BuildCxxDynamicCast(CompilerType type, ASTNodeUP rhs,
   } else {
     // Dynamic casts are allowed only for pointers and references.
     BailOut(
-        ErrorCode::kInvalidOperandType,
         llvm::formatv("invalid target type {0} for dynamic_cast; target type "
                       "must be a reference or pointer type to a defined class",
                       type.TypeDescription()),
-        location);
+        location, type.TypeDescription().length());
     return std::make_unique<ErrorNode>();
   }
   // Dynamic casts are allowed only for record types.
   if (!pointee_type.IsRecordType()) {
-    BailOut(
-        ErrorCode::kInvalidOperandType,
-        llvm::formatv("{0} is not a class type", pointee_type.TypeDescription()),
-        location);
+    BailOut(llvm::formatv("{0} is not a class type",
+                          pointee_type.TypeDescription()),
+            location, 1);
     return std::make_unique<ErrorNode>();
   }
 
@@ -3075,33 +3027,30 @@ ASTNodeUP DILParser::BuildCxxDynamicCast(CompilerType type, ASTNodeUP rhs,
     expr_type = expr_type.GetNonReferenceType();
   } else {
     // Expression type must be a pointer or a reference.
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("cannot use dynamic_cast to convert from {0} to {1}",
+    BailOut(llvm::formatv("cannot use dynamic_cast to convert from {0} to {1}",
                           expr_type.TypeDescription(), type.TypeDescription()),
-            location);
+            location, type.TypeDescription().length());
     return std::make_unique<ErrorNode>();
   }
   // Dynamic casts are allowed only for record types.
   if (!expr_type.IsRecordType()) {
     BailOut(
-        ErrorCode::kInvalidOperandType,
         llvm::formatv("{0} is not a class type", expr_type.TypeDescription()),
-        location);
+        location, 1);
     return std::make_unique<ErrorNode>();
   }
 
   // Expr type must be polymorphic.
   if (!expr_type.IsPolymorphicClass()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("{0} is not polymorphic", expr_type.TypeDescription()),
-            location);
+    BailOut(
+        llvm::formatv("{0} is not polymorphic", expr_type.TypeDescription()),
+        location, 1);
     return std::make_unique<ErrorNode>();
   }
 
   // LLDB doesn't support dynamic_cast in the expression evaluator. We disable
   // it too to match the behaviour, but theoretically it can be implemented.
-  BailOut(ErrorCode::kInvalidOperandType,
-          "dynamic_cast is not supported in this context", location);
+  BailOut("dynamic_cast is not supported in this context", location, 1);
   return std::make_unique<ErrorNode>();
 }
 
@@ -3135,7 +3084,7 @@ ASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs,
               std::unique_ptr<IdentifierInfo> new_info =
                   IdentifierInfo::FromValue(*child_sp);
               ASTNodeUP new_rhs = std::make_unique<IdentifierNode>(
-                  id_node->GetLocation(), id_node->GetName(), m_use_dynamic,
+                  id_node->GetLocation(), id_node->GetName(),
                   std::move(new_info), id_node->is_rvalue(),
                   id_node->is_context_var());
               rhs = std::move(new_rhs);
@@ -3157,11 +3106,10 @@ ASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs,
         }
 
         if (!synthetic_child) {
-          BailOut(
-              ErrorCode::kInvalidOperandType,
-              llvm::formatv("indirection requires pointer operand ({0} invalid)",
-                            rhs_type.TypeDescription()),
-              location);
+          BailOut(llvm::formatv(
+                      "indirection requires pointer operand ({0} invalid)",
+                      rhs_type.TypeDescription()),
+                  location, 1);
           return std::make_unique<ErrorNode>();
         }
       }
@@ -3170,15 +3118,13 @@ ASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs,
     case UnaryOpKind::AddrOf: {
       if (rhs->is_rvalue()) {
         BailOut(
-            ErrorCode::kInvalidOperandType,
             llvm::formatv("cannot take the address of an rvalue of type {0}",
                           rhs_type.TypeDescription()),
-            location);
+            location, 1);
         return std::make_unique<ErrorNode>();
       }
       if (rhs->is_bitfield()) {
-        BailOut(ErrorCode::kInvalidOperandType,
-                "address of bit-field requested", location);
+        BailOut("address of bit-field requested", location, 1);
         return std::make_unique<ErrorNode>();
       }
       result_type = rhs_type.GetPointerType();
@@ -3221,10 +3167,9 @@ ASTNodeUP DILParser::BuildUnaryOp(UnaryOpKind kind, ASTNodeUP rhs,
   }
 
   if (!result_type) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv(kInvalidOperandsToUnaryExpression,
+    BailOut(llvm::formatv(kInvalidOperandsToUnaryExpression,
                           rhs_type.TypeDescription()),
-            location);
+            location, 1);
     return std::make_unique<ErrorNode>();
   }
 
@@ -3380,11 +3325,10 @@ ASTNodeUP DILParser::BuildBinaryOp(BinaryOpKind kind, ASTNodeUP lhs,
                                           valobj_ptr);
   }
 
-  BailOut(ErrorCode::kInvalidOperandType,
-          llvm::formatv(kInvalidOperandsToBinaryExpression,
+  BailOut(llvm::formatv(kInvalidOperandsToBinaryExpression,
                         orig_lhs_type.TypeDescription(),
                         orig_rhs_type.TypeDescription()),
-          location);
+          location, 1);
   CompilerType bad_type;
   return std::make_unique<ErrorNode>();
 }
@@ -3395,10 +3339,9 @@ ASTNodeUP DILParser::BuildTernaryOp(ASTNodeUP cond, ASTNodeUP lhs,
   // First check if the condition contextually converted to bool.
   auto cond_type = cond->GetDereferencedResultType();
   if (!cond_type.IsContextuallyConvertibleToBool()) {
-    BailOut(
-        ErrorCode::kInvalidOperandType,
-        llvm::formatv(kValueIsNotConvertibleToBool, cond_type.TypeDescription()),
-        location);
+    BailOut(llvm::formatv(kValueIsNotConvertibleToBool,
+                          cond_type.TypeDescription()),
+            location, 1);
     return std::make_unique<ErrorNode>();
   }
 
@@ -3484,10 +3427,9 @@ ASTNodeUP DILParser::BuildTernaryOp(ASTNodeUP cond, ASTNodeUP lhs,
                                            std::move(lhs), std::move(rhs));
   }
 
-  BailOut(ErrorCode::kInvalidOperandType,
-          llvm::formatv("incompatible operand types ({0} and {1})",
+  BailOut(llvm::formatv("incompatible operand types ({0} and {1})",
                         lhs_type.TypeDescription(), rhs_type.TypeDescription()),
-          location);
+          location, 1);
   return std::make_unique<ErrorNode>();
 }
 
@@ -3527,13 +3469,11 @@ ASTNodeUP DILParser::BuildBinarySubscript(ASTNodeUP lhs, ASTNodeUP rhs,
         base = std::move(lhs);
         index = std::move(rhs);
       } else {
-        BailOut(ErrorCode::kInvalidOperandType,
-                "subscripted value is not an array or pointer", location);
+        BailOut("subscripted value is not an array or pointer", location, 1);
         return std::make_unique<ErrorNode>();
       }
     } else {
-      BailOut(ErrorCode::kInvalidOperandType,
-              "subscripted value is not an array or pointer", location);
+      BailOut("subscripted value is not an array or pointer", location, 1);
       return std::make_unique<ErrorNode>();
     }
   }
@@ -3544,15 +3484,13 @@ ASTNodeUP DILParser::BuildBinarySubscript(ASTNodeUP lhs, ASTNodeUP rhs,
 
   // Check if the index is of an integral type.
   if (!index_type.IsIntegerOrUnscopedEnumerationType()) {
-    BailOut(ErrorCode::kInvalidOperandType, "array subscript is not an integer",
-            location);
+    BailOut("array subscript is not an integer", location, 1);
     return std::make_unique<ErrorNode>();
   }
 
   auto base_type = base->GetDereferencedResultType();
   if (base_type.IsPointerToVoid()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            "subscript of pointer to incomplete type 'void'", location);
+    BailOut("subscript of pointer to incomplete type 'void'", location, 1);
     return std::make_unique<ErrorNode>();
   }
 
@@ -3581,11 +3519,10 @@ ASTNodeUP DILParser::BuildMemberOf(ASTNodeUP lhs, std::string member_id,
         lhs_valobj_sp = deref_sp;
         lhs_type = lhs_valobj_sp->GetCompilerType().GetPointerType();
       } else  {
-        BailOut(ErrorCode::kInvalidOperandType,
-                llvm::formatv("member reference type {0} is not a pointer; "
+        BailOut(llvm::formatv("member reference type {0} is not a pointer; "
                               "did you mean to use '.'?",
                               lhs_type.TypeDescription()),
-                location);
+                location, 2);
         return std::make_unique<ErrorNode>();
       }
     } else if (lhs_type.IsArrayType()) {
@@ -3599,22 +3536,20 @@ ASTNodeUP DILParser::BuildMemberOf(ASTNodeUP lhs, std::string member_id,
   } else {
     // "member of object" operator, check that LHS is an object.
     if (lhs_type.IsPointerType()) {
-      BailOut(ErrorCode::kInvalidOperandType,
-              llvm::formatv("member reference type {0} is a pointer; "
+      BailOut(llvm::formatv("member reference type {0} is a pointer; "
                             "did you mean to use '->'?",
                             lhs_type.TypeDescription()),
-              location);
+              location, 1);
       return std::make_unique<ErrorNode>();
     }
   }
 
   // Check if LHS is a record type, i.e. class/struct or union.
   if (!lhs_type.IsRecordType()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv(
+    BailOut(llvm::formatv(
                 "member reference base type {0} is not a structure or union",
                 lhs_type.TypeDescription()),
-            location);
+            location, 1);
     return std::make_unique<ErrorNode>();
   }
 
@@ -3622,10 +3557,9 @@ ASTNodeUP DILParser::BuildMemberOf(ASTNodeUP lhs, std::string member_id,
                                          UseSynthetic(), is_arrow);
 
   if (!opt_member) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("no member named '{0}' in {1}", member_id,
+    BailOut(llvm::formatv("no member named '{0}' in {1}", member_id,
                           lhs_type.GetFullyUnqualifiedType().TypeDescription()),
-            location);
+            location, member_id.length());
     return std::make_unique<ErrorNode>();
   }
 
@@ -3655,18 +3589,16 @@ ASTNodeUP DILParser::BuildMemberOf(ASTNodeUP lhs, std::string member_id,
 
 void DILParser::Expect(Token::Kind kind) {
   if (CurToken().IsNot(kind)) {
-    BailOut(ErrorCode::kUnknown,
-            llvm::formatv("expected {0}, got: {1}", kind, CurToken()),
-            CurToken().GetLocation());
+    BailOut(llvm::formatv("expected {0}, got: {1}", kind, CurToken()),
+            CurToken().GetLocation(), CurToken().GetSpelling().length());
   }
 }
 
 void DILParser::ExpectOneOf(std::vector<Token::Kind> kinds_vec) {
   if (!CurToken().IsOneOf(kinds_vec)) {
-    BailOut(ErrorCode::kUnknown,
-            llvm::formatv("expected any of ({0}), got: {1}",
+    BailOut(llvm::formatv("expected any of ({0}), got: {1}",
                           llvm::iterator_range(kinds_vec), CurToken()),
-            CurToken().GetLocation());
+            CurToken().GetLocation(), CurToken().GetSpelling().length());
   }
 }
 
@@ -3687,15 +3619,13 @@ ASTNodeUP DILParser::BuildIncrementDecrement(UnaryOpKind kind, ASTNodeUP rhs,
   // modify the context variable. However, MSVC debugger doesn't allow it, so we
   // don't implement it too.
   if (rhs->is_rvalue()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("expression is not assignable"), location);
+    BailOut(llvm::formatv("expression is not assignable"), location, 1);
     return std::make_unique<ErrorNode>();
   }
   if (!rhs->is_context_var() && !AllowSideEffects()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("side effects are not supported in this context: "
+    BailOut(llvm::formatv("side effects are not supported in this context: "
                           "trying to modify data at the target process"),
-            location);
+            location, 1);
     return std::make_unique<ErrorNode>();
   }
   llvm::StringRef op_name =
@@ -3703,17 +3633,15 @@ ASTNodeUP DILParser::BuildIncrementDecrement(UnaryOpKind kind, ASTNodeUP rhs,
           ? "increment"
           : "decrement";
   if (rhs_type.IsEnumerationType()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("cannot {0} expression of enum type '{1}'", op_name,
+    BailOut(llvm::formatv("cannot {0} expression of enum type '{1}'", op_name,
                           rhs_type.GetTypeName()),
-            location);
+            location, 1);
     return std::make_unique<ErrorNode>();
   }
   if (!rhs_type.IsScalarType() && !rhs_type.IsPointerType()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("cannot {0} value of type '{1}'", op_name,
+    BailOut(llvm::formatv("cannot {0} value of type '{1}'", op_name,
                           rhs_type.GetTypeName()),
-            location);
+            location, 1);
     return std::make_unique<ErrorNode>();
   }
 
@@ -3757,8 +3685,7 @@ CompilerType DILParser::PrepareBinaryAddition(ASTNodeUP &lhs, ASTNodeUP &rhs,
   }
 
   if (ptr_type.IsPointerToVoid()) {
-    BailOut(ErrorCode::kInvalidOperandType, "arithmetic on a pointer to void",
-            location);
+    BailOut("arithmetic on a pointer to void", location, 1);
     return bad_type;
   }
 
@@ -3787,8 +3714,7 @@ CompilerType DILParser::PrepareBinarySubtraction(ASTNodeUP &lhs, ASTNodeUP &rhs,
 
   if (lhs_type.IsPointerType() && rhs_type.IsInteger()) {
     if (lhs_type.IsPointerToVoid()) {
-      BailOut(ErrorCode::kInvalidOperandType, "arithmetic on a pointer to void",
-              location);
+      BailOut("arithmetic on a pointer to void", location, 1);
       return bad_type;
     }
 
@@ -3797,8 +3723,7 @@ CompilerType DILParser::PrepareBinarySubtraction(ASTNodeUP &lhs, ASTNodeUP &rhs,
 
   if (lhs_type.IsPointerType() && rhs_type.IsPointerType()) {
     if (lhs_type.IsPointerToVoid() && rhs_type.IsPointerToVoid()) {
-      BailOut(ErrorCode::kInvalidOperandType, "arithmetic on pointers to void",
-              location);
+      BailOut("arithmetic on pointers to void", location, 1);
       return bad_type;
     }
 
@@ -3811,11 +3736,10 @@ CompilerType DILParser::PrepareBinarySubtraction(ASTNodeUP &lhs, ASTNodeUP &rhs,
         lhs_unqualified_type.CompareTypes(rhs_unqualified_type);
 
     if (!comparable) {
-      BailOut(
-          ErrorCode::kInvalidOperandType,
-          llvm::formatv("{0} and {1} are not pointers to compatible types",
-                        lhs_type.TypeDescription(), rhs_type.TypeDescription()),
-          location);
+      BailOut(llvm::formatv("{0} and {1} are not pointers to compatible types",
+                            lhs_type.TypeDescription(),
+                            rhs_type.TypeDescription()),
+              location, 1);
       return bad_type;
     }
 
@@ -3979,11 +3903,10 @@ CompilerType DILParser::PrepareBinaryComparison(BinaryOpKind kind,
           lhs_unqualified_type.CompareTypes(rhs_unqualified_type);
 
       if (!comparable) {
-        BailOut(
-            ErrorCode::kInvalidOperandType,
-            llvm::formatv("comparison of distinct pointer types ({0} and {1})",
-                          lhs_type.TypeDescription(), rhs_type.TypeDescription()),
-            location);
+        BailOut(llvm::formatv(
+                    "comparison of distinct pointer types ({0} and {1})",
+                    lhs_type.TypeDescription(), rhs_type.TypeDescription()),
+                location, 1);
         return bad_type;;
       }
     }
@@ -4013,17 +3936,15 @@ CompilerType DILParser::PrepareBinaryLogical(const ASTNodeUP &lhs,
 
   if (!lhs_type.IsContextuallyConvertibleToBool()) {
     BailOut(
-        ErrorCode::kInvalidOperandType,
         llvm::formatv(kValueIsNotConvertibleToBool, lhs_type.TypeDescription()),
-        lhs->GetLocation());
+        lhs->GetLocation(), 1);
     return bad_type;
   }
 
   if (!rhs_type.IsContextuallyConvertibleToBool()) {
     BailOut(
-        ErrorCode::kInvalidOperandType,
         llvm::formatv(kValueIsNotConvertibleToBool, rhs_type.TypeDescription()),
-        rhs->GetLocation());
+        rhs->GetLocation(), 1);
     return bad_type;
   }
 
@@ -4043,15 +3964,13 @@ DILParser::PrepareCompositeAssignment(CompilerType comp_assign_type,
   // allow it, so we don't implement it too.
   CompilerType bad_type;
   if (lhs->is_rvalue()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("expression is not assignable"), location);
+    BailOut(llvm::formatv("expression is not assignable"), location, 1);
     return bad_type;
   }
   if (!lhs->is_context_var() && !AllowSideEffects()) {
-    BailOut(ErrorCode::kInvalidOperandType,
-            llvm::formatv("side effects are not supported in this context: "
+    BailOut(llvm::formatv("side effects are not supported in this context: "
                           "trying to modify data at the target process"),
-            location);
+            location, 1);
     return bad_type;
   }
 
@@ -4063,35 +3982,24 @@ DILParser::PrepareCompositeAssignment(CompilerType comp_assign_type,
     return lhs_type;
   }
 
-  BailOut(ErrorCode::kInvalidOperandType,
-          llvm::formatv("no known conversion from {0} to {1}",
+  BailOut(llvm::formatv("no known conversion from {0} to {1}",
                         comp_assign_type.TypeDescription(),
                         lhs_type.TypeDescription()),
-          location);
+          location, 1);
   return bad_type;
 }
 
-void DILParser::BailOut(ErrorCode code, const std::string& error,
-                        uint32_t loc) {
-  if (m_error.Fail()) {
+void DILParser::BailOut(const std::string &error, uint32_t loc,
+                        uint16_t err_len) {
+  if (m_error) {
     // If error is already set, then the parser is in the "bail-out" mode. Don't
     // do anything and keep the original error.
     return;
   }
 
-  m_error = Status((uint32_t) code, lldb::eErrorTypeGeneric,
-                   FormatDiagnostics(m_input_expr, error, loc));
-  // Advance the lexer token index to the end of the lexed tokens vector.
-  m_dil_lexer.ResetTokenIdx(m_dil_lexer.NumLexedTokens() - 1);
-}
+  m_error =
+      llvm::make_error<DILDiagnosticError>(m_input_expr, error, loc, err_len);
 
-void DILParser::BailOut(Status error) {
-  if (m_error.Fail()) {
-    // If error is already set, then the parser is in the "bail-out" mode. Don't
-    // do anything and keep the original error.
-    return;
-  }
-  m_error = std::move(error);
   // Advance the lexer token index to the end of the lexed tokens vector.
   m_dil_lexer.ResetTokenIdx(m_dil_lexer.NumLexedTokens() - 1);
 }
@@ -4149,10 +4057,9 @@ ASTNodeUP DILParser::InsertImplicitConversion(ASTNodeUP expr,
     llvm_unreachable("invalid implicit cast kind");
   }
 
-  BailOut(ErrorCode::kInvalidOperandType,
-          llvm::formatv("no known conversion from {0} to {1}",
+  BailOut(llvm::formatv("no known conversion from {0} to {1}",
                         expr_type.TypeDescription(), type.TypeDescription()),
-          expr->GetLocation());
+          expr->GetLocation(), 1);
   CompilerType bad_type;
   return std::make_unique<ErrorNode>();
 }

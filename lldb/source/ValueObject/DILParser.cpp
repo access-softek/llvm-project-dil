@@ -34,12 +34,6 @@
 
 namespace {
 
-const char* kInvalidOperandsToUnaryExpression =
-    "invalid argument type {0} to unary expression";
-
-const char* kInvalidOperandsToBinaryExpression =
-    "invalid operands to binary expression ({0} and {1})";
-
 const char* kValueIsNotConvertibleToBool =
     "value of type {0} is not contextually convertible to 'bool'";
 
@@ -81,20 +75,6 @@ static CompilerType GetBasicType(std::shared_ptr<ExecutionContextScope> ctx,
   }
   CompilerType empty_type;
   return empty_type;
-}
-
-static lldb::BasicType GetPtrDiffType(std::shared_ptr<ExecutionContextScope> ctx)
-{
-  lldb::TargetSP target_sp = ctx->CalculateTarget();
-  llvm::Triple triple(
-      llvm::Twine(target_sp->GetArchitecture().GetTriple().str()));
-
-  if (triple.isOSWindows()) {
-    return triple.isArch64Bit() ? lldb::eBasicTypeLongLong
-                                : lldb::eBasicTypeInt;
-  } else {
-    return triple.isArch64Bit() ? lldb::eBasicTypeLong : lldb::eBasicTypeInt;
-  }
 }
 
 static std::unique_ptr<BuiltinFunctionDef> GetBuiltinFunctionDef(

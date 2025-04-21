@@ -2420,6 +2420,9 @@ llvm::Error Interpreter::PrepareBinaryComparison(BinaryOpKind kind,
   auto orig_lhs_type = lhs->GetCompilerType();
   auto orig_rhs_type = rhs->GetCompilerType();
 
+  if (orig_lhs_type == orig_rhs_type)
+    return llvm::Error::success();
+
   bool is_ordered = (kind == BinaryOpKind::LT || kind == BinaryOpKind::LE ||
                      kind == BinaryOpKind::GT || kind == BinaryOpKind::GE);
 
@@ -2427,6 +2430,62 @@ llvm::Error Interpreter::PrepareBinaryComparison(BinaryOpKind kind,
       orig_lhs_type.IsNullPtrType() || IsLiteralZero(lhs);
   bool rhs_nullptr_or_zero =
       orig_rhs_type.IsNullPtrType() || IsLiteralZero(rhs);
+
+  CompilerType lhs_type = orig_lhs_type;
+  CompilerType rhs_type = orig_rhs_type;
+  lldb::ValueObjectSP lhs_child;
+  lldb::ValueObjectSP rhs_child;
+  bool is_signed;
+
+  if (!lhs_nullptr_or_zero && !orig_lhs_type.IsPointerType() &&
+      !orig_lhs_type.IsIntegerOrEnumerationType(is_signed)) {
+    // lhs is not a nullptr, pointer, enum or integer. Check to see if its
+    // first child could be a pointer. If so, update lhs_type appropriately.
+    lhs_child = lhs->GetChildAtIndex(0);
+    if (lhs_child && (lhs_child->IsPointerType() ||
+                      lhs_child->GetCompilerType().IsNullPtrType())) {
+      lhs_type = lhs_child->GetCompilerType();
+    }
+  }
+  if (!rhs_nullptr_or_zero && !orig_rhs_type.IsPointerType() &&
+      !orig_rhs_type.IsIntegerOrEnumerationType(is_signed)) {
+    // rhis is not a nullptr, pointer, enum or integer. Check to see if its
+    // first child could be a pointer. If so, update rhs_type appropriately.
+    rhs_child = rhs->GetChildAtIndex(0);
+    if (rhs_child && (rhs_child->IsPointerType() ||
+                      rhs_child->GetCompilerType().IsNullPtrType())) {
+      rhs_type = rhs_child->GetCompilerType();
+    }
+  }
+
+  if ((lhs_type != orig_lhs_type) || (rhs_type != orig_rhs_type)) {
+    if (lhs_type.IsNullPtrType() || rhs_type.IsNullPtrType())
+      return llvm::Error::success();
+
+    // May be an integer or enum.
+    if (!lhs_type.IsPointerType() || !rhs_type.IsPointerType())
+      return llvm::Error::success();
+
+    CompilerType type1 = lhs_type.GetCanonicalType().GetFullyUnqualifiedType();
+    CompilerType type2 = rhs_type.GetCanonicalType().GetFullyUnqualifiedType();
+
+    if (type1.IsPointerToVoid() || type2.IsPointerToVoid())
+      return llvm::Error::success();
+
+    // We have two pointers, neither of which is nullptr or void *. Make
+    // sure their types are compatible.
+    bool comparable = type1.CompareTypes(type2);
+    if (comparable)
+      return llvm::Error::success();
+
+    return BailOut(
+        ErrorCode::kInvalidOperandType,
+        llvm::formatv("comparison of distinct pointer types ({0} and {1})",
+                      orig_lhs_type.TypeDescription(),
+                      orig_rhs_type.TypeDescription()),
+        location);
+  }
+
   if (!is_ordered && ((orig_lhs_type.IsNullPtrType() && rhs_nullptr_or_zero) ||
                       (lhs_nullptr_or_zero && orig_rhs_type.IsNullPtrType()))) {
     return llvm::Error::success();
@@ -2437,8 +2496,8 @@ llvm::Error Interpreter::PrepareBinaryComparison(BinaryOpKind kind,
   // rules for arithmetic operators.
   ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
 
-  auto lhs_type = lhs->GetCompilerType();
-  auto rhs_type = rhs->GetCompilerType();
+  lhs_type = lhs->GetCompilerType();
+  rhs_type = rhs->GetCompilerType();
 
   auto boolean_ty = GetBasicType(m_exe_ctx_scope, lldb::eBasicTypeBool);
 
@@ -2622,6 +2681,22 @@ lldb::ValueObjectSP Interpreter::EvaluateComparison(BinaryOpKind kind,
   size_t ptr_size = m_target->GetArchitecture().GetAddressByteSize() * 8;
   llvm::Expected<llvm::APSInt> l = lhs->GetValueAsAPSInt();
   llvm::Expected<llvm::APSInt> r = rhs->GetValueAsAPSInt();
+
+  if (!l) {
+    lldb::ValueObjectSP ptr_val = lhs->GetChildAtIndex(0);
+    if (ptr_val) {
+      llvm::consumeError(std::move(l.takeError()));
+      l = ptr_val->GetValueAsAPSInt();
+    }
+  }
+
+  if (!r) {
+    lldb::ValueObjectSP ptr_val = rhs->GetChildAtIndex(0);
+    if (ptr_val) {
+      llvm::consumeError(std::move(r.takeError()));
+      r = ptr_val->GetValueAsAPSInt();
+    }
+  }
 
   if (l && r) {
     bool ret =

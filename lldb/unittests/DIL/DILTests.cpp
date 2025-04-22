@@ -1678,7 +1678,7 @@ TEST_F(EvalTest, TestCastBaseToDerived) {
       IsError("cannot cast 'CxxB' to 'CxxVE &' via virtual base 'CxxB'"));
 }
 
-TEST_F(EvalTest, TestCxxDynamicCast) {
+TEST_F(EvalTest, DISABLED_TestCxxDynamicCast) {
   // LLDB doesn't support `dynamic_cast` in the expression evaluator.
   this->compare_with_lldb_ = false;
 

@@ -105,6 +105,158 @@ static uint64_t GetUInt64(lldb::ValueObjectSP value_sp) {
       : value_sp->GetValueAsUnsigned(0);
 }
 
+static CompilerType GetBasicType(std::shared_ptr<ExecutionContextScope> ctx,
+                                 lldb::BasicType basic_type) {
+  static std::unordered_map<lldb::BasicType, CompilerType> basic_types;
+  auto type = basic_types.find(basic_type);
+  if (type != basic_types.end()) {
+    std::string type_name((type->second).GetTypeName().AsCString());
+    // Only return the found type if it's valid.
+    if (type_name != "<invalid>")
+      return type->second;
+  }
+
+  lldb::TargetSP target_sp = ctx->CalculateTarget();
+  if (target_sp) {
+    for (auto type_system_sp : target_sp->GetScratchTypeSystems())
+      if (auto compiler_type =
+              type_system_sp->GetBasicTypeFromAST(basic_type)) {
+        basic_types.insert({basic_type, compiler_type});
+        return compiler_type;
+      }
+  }
+  CompilerType empty_type;
+  return empty_type;
+}
+
+static CompilerType
+DoIntegralPromotion(CompilerType from,
+                    std::shared_ptr<ExecutionContextScope> ctx) {
+  if (!from.IsInteger() && !from.IsUnscopedEnumerationType())
+    return from;
+
+  if (!from.IsPromotableIntegerType())
+    return from;
+
+  if (from.IsUnscopedEnumerationType())
+    return DoIntegralPromotion(from.GetEnumerationIntegerType(), ctx);
+  lldb::BasicType builtin_type =
+      from.GetCanonicalType().GetBasicTypeEnumeration();
+
+  uint64_t from_size = 0;
+  if (builtin_type == lldb::eBasicTypeWChar ||
+      builtin_type == lldb::eBasicTypeSignedWChar ||
+      builtin_type == lldb::eBasicTypeUnsignedWChar ||
+      builtin_type == lldb::eBasicTypeChar16 ||
+      builtin_type == lldb::eBasicTypeChar32) {
+    // Find the type that can hold the entire range of values for our type.
+    bool is_signed = from.IsSigned();
+    if (auto temp = from.GetByteSize(ctx.get()))
+      from_size = temp.value();
+
+    CompilerType promote_types[] = {
+        GetBasicType(ctx, lldb::eBasicTypeInt),
+        GetBasicType(ctx, lldb::eBasicTypeUnsignedInt),
+        GetBasicType(ctx, lldb::eBasicTypeLong),
+        GetBasicType(ctx, lldb::eBasicTypeUnsignedLong),
+        GetBasicType(ctx, lldb::eBasicTypeLongLong),
+        GetBasicType(ctx, lldb::eBasicTypeUnsignedLongLong),
+    };
+    for (auto &type : promote_types) {
+      uint64_t byte_size = 0;
+      if (auto temp = type.GetByteSize(ctx.get()))
+        byte_size = temp.value();
+      if (from_size < byte_size ||
+          (from_size == byte_size &&
+           is_signed == (bool)(type.GetTypeInfo() & lldb::eTypeIsSigned))) {
+        return type;
+      }
+    }
+
+    llvm_unreachable("char type should fit into long long");
+  }
+
+  // Here we can promote only to "int" or "unsigned int".
+  CompilerType int_type = GetBasicType(ctx, lldb::eBasicTypeInt);
+  uint64_t int_byte_size = 0;
+  if (auto temp = int_type.GetByteSize(ctx.get()))
+    int_byte_size = temp.value();
+
+  // Signed integer types can be safely promoted to "int".
+  if (from.IsSigned()) {
+    return int_type;
+  }
+  // Unsigned integer types are promoted to "unsigned int" if "int" cannot hold
+  // their entire value range.
+  return (from_size == int_byte_size)
+             ? GetBasicType(ctx, lldb::eBasicTypeUnsignedInt)
+             : int_type;
+}
+
+static lldb::ValueObjectSP
+ArrayToPointerConversion(lldb::ValueObjectSP valobj,
+                         std::shared_ptr<ExecutionContextScope> ctx) {
+  assert(valobj->IsArrayType() &&
+         "an argument to array-to-pointer conversion must be an array");
+
+  uint64_t addr = valobj->GetLoadAddress();
+  llvm::StringRef name = "result";
+  ExecutionContext exe_ctx;
+  ctx->CalculateExecutionContext(exe_ctx);
+  return ValueObject::CreateValueObjectFromAddress(
+      name, addr, exe_ctx,
+      valobj->GetCompilerType().GetArrayElementType(ctx.get()).GetPointerType(),
+      /* do_deref */ false);
+}
+
+static lldb::ValueObjectSP
+UnaryConversion(lldb::ValueObjectSP valobj,
+                std::shared_ptr<ExecutionContextScope> ctx) {
+  // Perform usual conversions for unary operators. At the moment this includes
+  // array-to-pointer and the integral promotion for eligible types.
+  CompilerType in_type = valobj->GetCompilerType();
+  CompilerType result_type;
+  if (valobj->IsBitfield()) {
+    // Promote bitfields. If `int` can represent the bitfield value, it is
+    // converted to `int`. Otherwise, if `unsigned int` can represent it, it
+    // is converted to `unsigned int`. Otherwise, it is treated as its
+    // underlying type.
+    uint32_t bitfield_size = valobj->GetBitfieldBitSize();
+    // Some bitfields have undefined size (e.g. result of ternary operation).
+    // The AST's `bitfield_size` of those is 0, and no promotion takes place.
+    if (bitfield_size > 0 && in_type.IsInteger()) {
+      auto int_type = GetBasicType(ctx, lldb::eBasicTypeInt);
+      auto uint_type = GetBasicType(ctx, lldb::eBasicTypeUnsignedInt);
+      uint64_t int_byte_size = 0;
+      uint64_t uint_byte_size = 0;
+      if (auto temp = int_type.GetByteSize(ctx.get()))
+        int_byte_size = temp.value();
+      if (auto temp = uint_type.GetByteSize(ctx.get()))
+        uint_byte_size = temp.value();
+      uint32_t int_bit_size = int_byte_size * CHAR_BIT;
+      if (bitfield_size < int_bit_size ||
+          (in_type.IsSigned() && bitfield_size == int_bit_size))
+        valobj = valobj->CastToBasicType(int_type);
+      else if (bitfield_size <= uint_byte_size * CHAR_BIT)
+        valobj = valobj->CastToBasicType(uint_type);
+    }
+  }
+
+  if (in_type.IsArrayType()) {
+    valobj = ArrayToPointerConversion(valobj, ctx);
+  }
+
+  if (valobj->GetCompilerType().IsInteger() ||
+      valobj->GetCompilerType().IsUnscopedEnumerationType()) {
+    CompilerType promoted_type =
+        DoIntegralPromotion(valobj->GetCompilerType(), ctx);
+    if (!promoted_type.CompareTypes(valobj->GetCompilerType()))
+      return valobj->CastToBasicType(promoted_type);
+  }
+
+  return valobj;
+}
+
 static lldb::ValueObjectSP EvaluateArithmeticOpInteger(lldb::TargetSP target,
                                                        BinaryOpKind kind,
                                                        lldb::ValueObjectSP lhs,
@@ -584,6 +736,12 @@ lldb::ValueObjectSP LookupIdentifier(llvm::StringRef name_ref,
   return nullptr;
 }
 
+static bool IsLiteralZero(lldb::ValueObjectSP &val) {
+  bool is_zero = val->GetValueAsUnsigned(-1) == 0;
+  bool is_boolean = val->GetCompilerType().IsBoolean();
+  return is_zero && !is_boolean;
+}
+
 Interpreter::Interpreter(lldb::TargetSP target, llvm::StringRef expr,
                          lldb::DynamicValueType use_dynamic,
                          std::shared_ptr<StackFrame> frame_sp)
@@ -913,21 +1071,122 @@ Interpreter::Visit(const CStyleCastNode *node) {
     if (error.Fail())
       return error.ToError();
   }
+  auto rhs_type = rhs->GetCompilerType();
 
-  switch (node->cast_kind()) {
-    case CStyleCastKind::eEnumeration: {
-      assert(type.IsEnumerationType() &&
-             "invalid ast: target type should be an enumeration.");
-      if (rhs->GetCompilerType().IsFloat())
-        return rhs->CastToEnumType(type);
+  CStyleCastKind cast_kind = dil::CStyleCastKind::eNone;
+  TypePromotionCastKind promo_kind = dil::TypePromotionCastKind::eNone;
+  // Cast to basic type (integer/float).
+  if (type.IsScalarType()) {
+    // Before casting arrays to scalar types, array-to-pointer conversion
+    // should be performed.
+    if (rhs_type.IsArrayType()) {
+      rhs = ArrayToPointerConversion(rhs, m_exe_ctx_scope);
+      rhs_type = rhs->GetCompilerType();
+    }
+    // Pointers can be cast to integers of the same or larger size.
+    if (rhs_type.IsPointerType() || rhs_type.IsNullPtrType()) {
+      // C-style cast from pointer to float/double is not allowed.
+      if (type.IsFloat()) {
+        return BailOut(
+            ErrorCode::kInvalidOperandType,
+            llvm::formatv("C-style cast from {0} to {1} is not allowed",
+                          rhs_type.TypeDescription(), type.TypeDescription()),
+            node->GetLocation());
+      }
+      // Casting pointer to bool is valid. Otherwise check if the result type
+      // is at least as big as the pointer size.
+      uint64_t type_byte_size = 0;
+      uint64_t rhs_type_byte_size = 0;
+      if (auto temp = type.GetByteSize(m_exe_ctx_scope.get()))
+        type_byte_size = temp.value();
+      if (auto temp = rhs_type.GetByteSize(m_exe_ctx_scope.get()))
+        rhs_type_byte_size = temp.value();
+      if (!type.IsBoolean() && type_byte_size < rhs_type_byte_size) {
+        return BailOut(
+            ErrorCode::kInvalidOperandType,
+            llvm::formatv(
+                "cast from pointer to smaller type {0} loses information",
+                type.TypeDescription()),
+            node->GetLocation());
+      }
+    } else if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
+      // Otherwise accept only arithmetic types and enums.
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv(
+              "cannot convert {0} to {1} without a conversion operator",
+              rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+    promo_kind = TypePromotionCastKind::eArithmetic;
+  } else if (type.IsEnumerationType()) {
+    // Cast to enum type.
+    if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("C-style cast from {0} to {1} is not allowed",
+                        rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+    cast_kind = CStyleCastKind::eEnumeration;
 
-      if (rhs->GetCompilerType().IsInteger() ||
-          rhs->GetCompilerType().IsEnumerationType())
-        return rhs->CastToEnumType(type);
+  } else if (type.IsPointerType() && rhs_type) {
+    // Cast to pointer type.
+    if (!rhs_type.IsInteger() && !rhs_type.IsEnumerationType() &&
+        !rhs_type.IsArrayType() && !rhs_type.IsPointerType() &&
+        !rhs_type.IsNullPtrType()) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("cannot cast from type {0} to pointer type {1}",
+                        rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+    promo_kind = TypePromotionCastKind::ePointer;
+  } else if (type.IsNullPtrType()) {
+    // Cast to nullptr type.
+    if (!rhs_type.IsNullPtrType() && !node->operand()->is_literal_zero()) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("C-style cast from {0} to {1} is not allowed",
+                        rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+    cast_kind = CStyleCastKind::eNullptr;
 
-      Status error(
-          "invalid ast: operand is not convertible to enumeration type");
-      return error.ToError();
+  } else if (type.IsReferenceType()) {
+    // Cast to a reference type.
+    if (node->operand()->is_rvalue()) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("C-style cast from rvalue to reference type {0}",
+                        type.TypeDescription()),
+          node->GetLocation());
+    }
+    cast_kind = CStyleCastKind::eReference;
+  } else if (rhs_type) {
+    // Unsupported cast.
+    return BailOut(ErrorCode::kNotImplemented,
+                   llvm::formatv("casting of {0} to {1} is not implemented yet",
+                                 rhs_type.TypeDescription(),
+                                 type.TypeDescription()),
+                   node->GetLocation());
+  }
+  if (type.IsPointerType() && !rhs_type)
+    promo_kind = TypePromotionCastKind::ePointer;
+
+  switch (cast_kind) {
+  case CStyleCastKind::eEnumeration: {
+    assert(type.IsEnumerationType() &&
+           "invalid ast: target type should be an enumeration.");
+    if (rhs->GetCompilerType().IsFloat())
+      return rhs->CastToEnumType(type);
+
+    if (rhs->GetCompilerType().IsInteger() ||
+        rhs->GetCompilerType().IsEnumerationType())
+      return rhs->CastToEnumType(type);
+
+    Status error("invalid ast: operand is not convertible to enumeration type");
+    return error.ToError();
     }
     case CStyleCastKind::eNullptr: {
       assert(
@@ -943,26 +1202,26 @@ Interpreter::Visit(const CStyleCastNode *node) {
     }
     case CStyleCastKind::eNone: {
 
-      switch (node->promo_kind()) {
+      switch (promo_kind) {
 
-        case TypePromotionCastKind::eArithmetic: {
-          assert((type.GetCanonicalType().GetBasicTypeEnumeration() !=
-                  lldb::eBasicTypeInvalid) &&
-                 "invalid ast: target type should be a basic type.");
-          // Pick an appropriate cast.
-          if (rhs->GetCompilerType().IsPointerType()
-              || rhs->GetCompilerType().IsNullPtrType()) {
-            return rhs->CastToBasicType(type);
-          }
-          if (rhs->GetCompilerType().IsScalarType()) {
-            return rhs->CastToBasicType(type);
-          }
-          if (rhs->GetCompilerType().IsEnumerationType()) {
-            return rhs->CastToBasicType(type);
-          }
-          Status error(
-              "invalid ast: operand is not convertible to arithmetic type");
-          return error.ToError();
+      case TypePromotionCastKind::eArithmetic: {
+        assert((type.GetCanonicalType().GetBasicTypeEnumeration() !=
+                lldb::eBasicTypeInvalid) &&
+               "invalid ast: target type should be a basic type.");
+        // Pick an appropriate cast.
+        if (rhs->GetCompilerType().IsPointerType() ||
+            rhs->GetCompilerType().IsNullPtrType()) {
+          return rhs->CastToBasicType(type);
+        }
+        if (rhs->GetCompilerType().IsScalarType()) {
+          return rhs->CastToBasicType(type);
+        }
+        if (rhs->GetCompilerType().IsEnumerationType()) {
+          return rhs->CastToBasicType(type);
+        }
+        Status error(
+            "invalid ast: operand is not convertible to arithmetic type");
+        return error.ToError();
         }
         case TypePromotionCastKind::ePointer: {
           assert(type.IsPointerType() &&
@@ -978,12 +1237,99 @@ Interpreter::Visit(const CStyleCastNode *node) {
         }
         case TypePromotionCastKind::eNone:
           return lldb::ValueObjectSP();
-      }
+        }
     }
-  }
+    }
 
   Status error("invalid ast: unexpected c-style cast kind");
   return error.ToError();
+}
+
+static bool GetPathToBaseType(CompilerType type, CompilerType target_base,
+                              std::vector<uint32_t> *path, uint64_t *offset) {
+  if (type.CompareTypes(target_base)) {
+    return true;
+  }
+
+  uint32_t bit_offset = 0;
+  uint32_t num_non_empty_bases = 0;
+  uint32_t num_direct_bases = type.GetNumDirectBaseClasses();
+  for (uint32_t i = 0; i < num_direct_bases; ++i) {
+    auto member_base_type = type.GetDirectBaseClassAtIndex(i, &bit_offset);
+    if (GetPathToBaseType(member_base_type, target_base, path, offset)) {
+      if (path) {
+        path->push_back(num_non_empty_bases);
+      }
+      if (offset) {
+        *offset += bit_offset / 8u;
+      }
+      return true;
+    }
+    if (member_base_type.GetNumFields() > 0) {
+      num_non_empty_bases++;
+    }
+  }
+
+  return false;
+}
+
+llvm::Error Interpreter::PrepareCxxStaticCastForInheritedTypes(
+    CompilerType type, lldb::ValueObjectSP rhs, uint32_t location,
+    std::vector<uint32_t> &idx, uint64_t &offset,
+    CxxStaticCastKind &cast_kind) {
+  assert((type.IsPointerType() || type.IsReferenceType()) &&
+         "target type should either be a pointer or a reference");
+
+  CompilerType bad_type;
+  auto rhs_type = rhs->GetCompilerType();
+  auto record_type =
+      type.IsPointerType() ? type.GetPointeeType() : type.GetNonReferenceType();
+  auto rhs_record_type =
+      rhs_type.IsPointerType() ? rhs_type.GetPointeeType() : rhs_type;
+
+  assert(record_type.IsRecordType() && rhs_record_type.IsRecordType() &&
+         "underlying RHS and target types should be record types");
+  assert(!record_type.CompareTypes(rhs_record_type) &&
+         "underlying RHS and target types should be different");
+
+  // Result of cast to reference type is an lvalue.
+  // bool is_rvalue = !type.IsReferenceType();
+
+  // Handle derived-to-base conversion.
+  if (GetPathToBaseType(rhs_record_type, record_type, &idx,
+                        /*offset*/ nullptr)) {
+    std::reverse(idx.begin(), idx.end());
+    // At this point `idx` represents indices of direct base classes on path
+    // from the `rhs` type to the target `type`.
+    cast_kind = CxxStaticCastKind::eDerivedToBase;
+    return llvm::Error::success();
+  }
+
+  // Handle base-to-derived conversion.
+  if (GetPathToBaseType(record_type, rhs_record_type, /*path*/ nullptr,
+                        &offset)) {
+    CompilerType virtual_base;
+    if (record_type.IsVirtualBase(rhs_record_type, &virtual_base)) {
+      // Base-to-derived conversion isn't possible for virtually inherited
+      // types (either directly or indirectly).
+      assert(virtual_base.IsValid() && "virtual base should be valid");
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("cannot cast {0} to {1} via virtual base {2}",
+                        rhs_type.TypeDescription(), type.TypeDescription(),
+                        virtual_base.TypeDescription()),
+          location);
+    }
+    cast_kind = CxxStaticCastKind::eBaseToDerived;
+    return llvm::Error::success();
+  }
+
+  return BailOut(ErrorCode::kInvalidOperandType,
+                 llvm::formatv("static_cast from {0} to {1}, which are not "
+                               "related by inheritance, is not allowed",
+                               rhs_type.TypeDescription(),
+                               type.TypeDescription()),
+                 location);
 }
 
 llvm::Expected<lldb::ValueObjectSP>
@@ -1003,24 +1349,129 @@ Interpreter::Visit(const CxxStaticCastNode *node) {
     if (error.Fail())
       return error.ToError();
   }
-
   CompilerType rhs_type = rhs->GetCompilerType();
-  switch (node->cast_kind()) {
-    case CxxStaticCastKind::eNoOp: {
-      if (!orig_type.CompareTypes(rhs_type) && !type.CompareTypes(rhs_type)) {
-        Status error = Status(
-            (uint32_t)ErrorCode::kNotImplemented, lldb::eErrorTypeGeneric,
-            FormatDiagnostics(
-                m_expr,
-                llvm::formatv("static_cast from {0} to"
-                              " {1} is not implemented yet",
-                              rhs->GetCompilerType().TypeDescription(),
-                              orig_type.TypeDescription()),
-                node->GetLocation()));
-        return error.ToError();
+
+  // Perform implicit array-to-pointer conversion.
+  if (rhs_type.IsArrayType()) {
+    rhs = ArrayToPointerConversion(rhs, m_exe_ctx_scope);
+    rhs_type = rhs->GetCompilerType();
+  }
+  auto cast_kind = CxxStaticCastKind::eNone;
+  auto promo_kind = TypePromotionCastKind::eNone;
+  std::vector<uint32_t> idx;
+  uint64_t offset = 0;
+
+  if (rhs_type.CompareTypes(type)) {
+    cast_kind = CxxStaticCastKind::eNoOp;
+  } else if (type.IsScalarType()) {
+    if (rhs_type.IsPointerType() || rhs_type.IsNullPtrType()) {
+      // Pointers can be casted to bools.
+      if (!type.IsBoolean()) {
+        return BailOut(
+            ErrorCode::kInvalidOperandType,
+            llvm::formatv("static_cast from {0} to {1} is not allowed",
+                          rhs_type.TypeDescription(), type.TypeDescription()),
+            node->GetLocation());
       }
-      lldb::ValueObjectSP rhs_sp(GetDynamicOrSyntheticValue(rhs));
-      return lldb::ValueObjectSP(rhs_sp->Cast(type));
+    } else if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
+      // Otherwise accept only arithmetic types and enums.
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv(
+              "cannot convert {0} to {1} without a conversion operator",
+              rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+    promo_kind = TypePromotionCastKind::eArithmetic;
+  } else if (type.IsEnumerationType()) {
+    if (!rhs_type.IsScalarType() && !rhs_type.IsEnumerationType()) {
+      return BailOut(ErrorCode::kInvalidOperandType,
+                     llvm::formatv("static_cast from {0} to {1} is not allowed",
+                                   rhs_type.TypeDescription(),
+                                   type.TypeDescription()),
+                     node->GetLocation());
+    }
+    cast_kind = CxxStaticCastKind::eEnumeration;
+  } else if (type.IsPointerType()) {
+    if (rhs_type.IsPointerType()) {
+      auto type_pointee = type.GetPointeeType();
+      auto rhs_type_pointee = rhs_type.GetPointeeType();
+
+      if (type_pointee.IsRecordType() && rhs_type_pointee.IsRecordType()) {
+        if (auto err = PrepareCxxStaticCastForInheritedTypes(
+                type, rhs, node->GetLocation(), idx, offset, cast_kind))
+          return err;
+      } else if (!type.IsPointerToVoid() && !rhs_type.IsPointerToVoid()) {
+        return BailOut(
+            ErrorCode::kInvalidOperandType,
+            llvm::formatv("static_cast from {0} to {1} is not allowed",
+                          rhs_type.TypeDescription(), type.TypeDescription()),
+            node->GetLocation());
+      }
+    } else if (!rhs_type.IsNullPtrType() && !IsLiteralZero(rhs)) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("cannot cast from type {0} to pointer type '{1}'",
+                        rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+    promo_kind = TypePromotionCastKind::ePointer;
+  } else if (type.IsNullPtrType()) {
+    if (!rhs_type.IsNullPtrType() && !node->operand()->is_literal_zero()) {
+      return BailOut(ErrorCode::kInvalidOperandType,
+                     llvm::formatv("static_cast from {0} to {1} is not allowed",
+                                   rhs_type.TypeDescription(),
+                                   type.TypeDescription()),
+                     node->GetLocation());
+    }
+    cast_kind = CxxStaticCastKind::eNullptr;
+  } else if (type.IsReferenceType()) {
+    auto type_deref = type.GetNonReferenceType();
+
+    if (node->operand()->is_rvalue()) {
+      return BailOut(
+          ErrorCode::kNotImplemented,
+          llvm::formatv("static_cast from rvalue of type {0} to reference "
+                        "type {1} is not implemented yet",
+                        rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+
+    if (type_deref.CompareTypes(rhs_type) ||
+        llvm::isa<MemberOfNode>(node->operand())) {
+      cast_kind = CxxStaticCastKind::eNoOp;
+      orig_type = type;
+      type = type_deref;
+    } else if (type_deref.IsRecordType() && rhs_type.IsRecordType()) {
+      if (auto err = PrepareCxxStaticCastForInheritedTypes(
+              type, rhs, node->GetLocation(), idx, offset, cast_kind))
+        return err;
+    }
+  } else {
+    // Unsupported cast.
+    return BailOut(ErrorCode::kNotImplemented,
+                   llvm::formatv("casting of {0} to {1} is not implemented yet",
+                                 rhs_type.TypeDescription(),
+                                 type.TypeDescription()),
+                   node->GetLocation());
+  }
+
+  switch (cast_kind) {
+  case CxxStaticCastKind::eNoOp: {
+    if (!orig_type.CompareTypes(rhs_type) && !type.CompareTypes(rhs_type)) {
+      Status error =
+          Status((uint32_t)ErrorCode::kNotImplemented, lldb::eErrorTypeGeneric,
+                 FormatDiagnostics(
+                     m_expr,
+                     llvm::formatv("static_cast from {0} to"
+                                   " {1} is not implemented yet",
+                                   rhs->GetCompilerType().TypeDescription(),
+                                   orig_type.TypeDescription()),
+                     node->GetLocation()));
+      return error.ToError();
+    }
+    lldb::ValueObjectSP rhs_sp(GetDynamicOrSyntheticValue(rhs));
+    return lldb::ValueObjectSP(rhs_sp->Cast(type));
     }
 
     case CxxStaticCastKind::eEnumeration: {
@@ -1041,7 +1492,7 @@ Interpreter::Visit(const CxxStaticCastNode *node) {
 
     case CxxStaticCastKind::eDerivedToBase: {
       llvm::Expected<lldb::ValueObjectSP> result =
-          rhs->CastDerivedToBaseType(type, node->idx());
+          rhs->CastDerivedToBaseType(type, idx);
       if (result)
         return *result;
       return result;
@@ -1049,30 +1500,28 @@ Interpreter::Visit(const CxxStaticCastNode *node) {
 
     case CxxStaticCastKind::eBaseToDerived: {
       llvm::Expected<lldb::ValueObjectSP> result =
-          rhs->CastBaseToDerivedType(type, node->offset());
+          rhs->CastBaseToDerivedType(type, offset);
       if (result)
         return *result;
       return result;
     }
     case CxxStaticCastKind::eNone: {
+      switch (promo_kind) {
+      case TypePromotionCastKind::eArithmetic: {
+        assert(type.IsScalarType());
+        if (rhs->GetCompilerType().IsPointerType() ||
+            rhs->GetCompilerType().IsNullPtrType()) {
+          assert(type.IsBoolean() && "invalid ast: target type should be bool");
+          return rhs->CastToBasicType(type);
+        }
+        if (rhs->GetCompilerType().IsScalarType())
+          return rhs->CastToBasicType(type);
+        if (rhs->GetCompilerType().IsEnumerationType())
+          return rhs->CastToBasicType(type);
 
-      switch (node->promo_kind()) {
-
-        case TypePromotionCastKind::eArithmetic: {
-          assert(type.IsScalarType());
-          if (rhs->GetCompilerType().IsPointerType()
-              || rhs->GetCompilerType().IsNullPtrType()) {
-            assert(type.IsBoolean() && "invalid ast: target type should be bool");
-            return rhs->CastToBasicType(type);
-          }
-          if (rhs->GetCompilerType().IsScalarType())
-            return rhs->CastToBasicType(type);
-          if (rhs->GetCompilerType().IsEnumerationType())
-            return rhs->CastToBasicType(type);
-
-          Status error(
-              "invalid ast: operand is not convertible to arithmetic type");
-          return error.ToError();
+        Status error(
+            "invalid ast: operand is not convertible to arithmetic type");
+        return error.ToError();
         }
 
         case TypePromotionCastKind::ePointer: {
@@ -1090,9 +1539,9 @@ Interpreter::Visit(const CxxStaticCastNode *node) {
         }
         case TypePromotionCastKind::eNone:
           return lldb::ValueObjectSP();
-      }
+        }
     }
-  }
+    }
   return lldb::ValueObjectSP();
 }
 
@@ -1111,6 +1560,114 @@ Interpreter::Visit(const CxxReinterpretCastNode *node) {
     rhs = rhs->Dereference(error);
     if (error.Fail())
       return error.ToError();
+  }
+  auto rhs_type = rhs->GetCompilerType();
+
+  if (type.IsScalarType()) {
+    // reinterpret_cast doesn't support non-integral scalar types.
+    if (!type.IsInteger()) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+                        rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+
+    // Perform implicit conversions.
+    if (rhs_type.IsArrayType()) {
+      rhs = ArrayToPointerConversion(rhs, m_exe_ctx_scope);
+      rhs_type = rhs->GetCompilerType();
+    }
+
+    if (rhs_type.IsPointerType() || rhs_type.IsNullPtrType()) {
+      // A pointer can be converted to any integral type large enough to hold
+      // its value.
+      uint64_t type_byte_size = 0;
+      uint64_t rhs_type_byte_size = 0;
+      if (auto temp = type.GetByteSize(m_exe_ctx_scope.get()))
+        type_byte_size = temp.value();
+      if (auto temp = rhs_type.GetByteSize(m_exe_ctx_scope.get()))
+        rhs_type_byte_size = temp.value();
+      if (type_byte_size < rhs_type_byte_size) {
+        return BailOut(
+            ErrorCode::kInvalidOperandType,
+            llvm::formatv(
+                "cast from pointer to smaller type {0} loses information",
+                type.TypeDescription()),
+            node->GetLocation());
+      }
+    } else if (type.IsTypedefType() || rhs_type.IsTypedefType()) {
+      CompilerType base_type =
+          type.IsTypedefType() ? type.GetTypedefedType() : type;
+      CompilerType rhs_base_type =
+          rhs_type.IsTypedefType() ? rhs_type.GetTypedefedType() : rhs_type;
+      if (!base_type.CompareTypes(rhs_base_type)) {
+        // Integral type can be converted to its own type.
+        return BailOut(
+            ErrorCode::kInvalidOperandType,
+            llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+                          rhs_type.TypeDescription(), type.TypeDescription()),
+            node->GetLocation());
+      }
+    } else if (!type.CompareTypes(rhs_type)) {
+      // Integral type can be converted to its own type.
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+                        rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+  } else if (type.IsEnumerationType()) {
+    // Enumeration type can be converted to its own type.
+    CompilerType base_type =
+        type.IsTypedefType() ? type.GetTypedefedType() : type;
+    CompilerType rhs_base_type =
+        rhs_type.IsTypedefType() ? rhs_type.GetTypedefedType() : rhs_type;
+    if (!base_type.CompareTypes(rhs_base_type)) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+                        rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+
+  } else if (type.IsPointerType()) {
+    // Integral, enumeration and other pointer types can be converted to any
+    // pointer type.
+    // TODO: Implement an explicit node for array-to-pointer conversions.
+    if (!rhs_type.IsInteger() && !rhs_type.IsEnumerationType() &&
+        !rhs_type.IsArrayType() && !rhs_type.IsPointerType()) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+                        rhs_type.TypeDescription(), type.TypeDescription()),
+          node->GetLocation());
+    }
+
+  } else if (type.IsNullPtrType()) {
+    // reinterpret_cast to nullptr_t isn't allowed (even for nullptr_t).
+    return BailOut(
+        ErrorCode::kInvalidOperandType,
+        llvm::formatv("reinterpret_cast from {0} to {1} is not allowed",
+                      rhs_type.TypeDescription(), type.TypeDescription()),
+        node->GetLocation());
+
+  } else if (type.IsReferenceType()) {
+    // L-values can be converted to any reference type.
+    if (node->operand()->is_rvalue()) {
+      return BailOut(
+          ErrorCode::kInvalidOperandType,
+          llvm::formatv("reinterpret_cast from rvalue to reference type {0}",
+                        type.TypeDescription()),
+          node->GetLocation());
+    }
+  } else {
+    // Unsupported cast.
+    return BailOut(ErrorCode::kNotImplemented,
+                   llvm::formatv("casting of {0} to {1} is not implemented yet",
+                                 rhs_type.TypeDescription(),
+                                 type.TypeDescription()),
+                   node->GetLocation());
   }
 
   if (type.IsInteger()) {
@@ -1447,164 +2004,6 @@ Interpreter::Visit(const ArraySubscriptNode *node) {
   if (error.Fail())
     return error.ToError();
   return val2;
-}
-
-static bool IsLiteralZero(lldb::ValueObjectSP &val) {
-  bool is_zero = val->GetValueAsUnsigned(-1) == 0;
-  bool is_boolean = val->GetCompilerType().IsBoolean();
-  return is_zero && !is_boolean;
-}
-
-static CompilerType GetBasicType(std::shared_ptr<ExecutionContextScope> ctx,
-                                 lldb::BasicType basic_type) {
-  static std::unordered_map<lldb::BasicType, CompilerType> basic_types;
-  auto type = basic_types.find(basic_type);
-  if (type != basic_types.end()) {
-    std::string type_name((type->second).GetTypeName().AsCString());
-    // Only return the found type if it's valid.
-    if (type_name != "<invalid>")
-      return type->second;
-  }
-
-  lldb::TargetSP target_sp = ctx->CalculateTarget();
-  if (target_sp) {
-    for (auto type_system_sp : target_sp->GetScratchTypeSystems())
-      if (auto compiler_type =
-              type_system_sp->GetBasicTypeFromAST(basic_type)) {
-        basic_types.insert({basic_type, compiler_type});
-        return compiler_type;
-      }
-  }
-  CompilerType empty_type;
-  return empty_type;
-}
-
-static CompilerType
-DoIntegralPromotion(CompilerType from,
-                    std::shared_ptr<ExecutionContextScope> ctx) {
-  if (!from.IsInteger() && !from.IsUnscopedEnumerationType())
-    return from;
-
-  if (!from.IsPromotableIntegerType())
-    return from;
-
-  if (from.IsUnscopedEnumerationType())
-    return DoIntegralPromotion(from.GetEnumerationIntegerType(), ctx);
-  lldb::BasicType builtin_type =
-      from.GetCanonicalType().GetBasicTypeEnumeration();
-
-  uint64_t from_size = 0;
-  if (builtin_type == lldb::eBasicTypeWChar ||
-      builtin_type == lldb::eBasicTypeSignedWChar ||
-      builtin_type == lldb::eBasicTypeUnsignedWChar ||
-      builtin_type == lldb::eBasicTypeChar16 ||
-      builtin_type == lldb::eBasicTypeChar32) {
-    // Find the type that can hold the entire range of values for our type.
-    bool is_signed = from.IsSigned();
-    if (auto temp = from.GetByteSize(ctx.get()))
-      from_size = temp.value();
-
-    CompilerType promote_types[] = {
-        GetBasicType(ctx, lldb::eBasicTypeInt),
-        GetBasicType(ctx, lldb::eBasicTypeUnsignedInt),
-        GetBasicType(ctx, lldb::eBasicTypeLong),
-        GetBasicType(ctx, lldb::eBasicTypeUnsignedLong),
-        GetBasicType(ctx, lldb::eBasicTypeLongLong),
-        GetBasicType(ctx, lldb::eBasicTypeUnsignedLongLong),
-    };
-    for (auto &type : promote_types) {
-      uint64_t byte_size = 0;
-      if (auto temp = type.GetByteSize(ctx.get()))
-        byte_size = temp.value();
-      if (from_size < byte_size ||
-          (from_size == byte_size &&
-           is_signed == (bool)(type.GetTypeInfo() & lldb::eTypeIsSigned))) {
-        return type;
-      }
-    }
-
-    llvm_unreachable("char type should fit into long long");
-  }
-
-  // Here we can promote only to "int" or "unsigned int".
-  CompilerType int_type = GetBasicType(ctx, lldb::eBasicTypeInt);
-  uint64_t int_byte_size = 0;
-  if (auto temp = int_type.GetByteSize(ctx.get()))
-    int_byte_size = temp.value();
-
-  // Signed integer types can be safely promoted to "int".
-  if (from.IsSigned()) {
-    return int_type;
-  }
-  // Unsigned integer types are promoted to "unsigned int" if "int" cannot hold
-  // their entire value range.
-  return (from_size == int_byte_size)
-             ? GetBasicType(ctx, lldb::eBasicTypeUnsignedInt)
-             : int_type;
-}
-
-static lldb::ValueObjectSP
-ArrayToPointerConversion(lldb::ValueObjectSP valobj,
-                         std::shared_ptr<ExecutionContextScope> ctx) {
-  assert(valobj->IsArrayType() &&
-         "an argument to array-to-pointer conversion must be an array");
-
-  uint64_t addr = valobj->GetLoadAddress();
-  llvm::StringRef name = "result";
-  ExecutionContext exe_ctx;
-  ctx->CalculateExecutionContext(exe_ctx);
-  return ValueObject::CreateValueObjectFromAddress(
-      name, addr, exe_ctx,
-      valobj->GetCompilerType().GetArrayElementType(ctx.get()).GetPointerType(),
-      /* do_deref */ false);
-}
-
-static lldb::ValueObjectSP
-UnaryConversion(lldb::ValueObjectSP valobj,
-                std::shared_ptr<ExecutionContextScope> ctx) {
-  // Perform usual conversions for unary operators. At the moment this includes
-  // array-to-pointer and the integral promotion for eligible types.
-  CompilerType in_type = valobj->GetCompilerType();
-  CompilerType result_type;
-  if (valobj->IsBitfield()) {
-    // Promote bitfields. If `int` can represent the bitfield value, it is
-    // converted to `int`. Otherwise, if `unsigned int` can represent it, it
-    // is converted to `unsigned int`. Otherwise, it is treated as its
-    // underlying type.
-    uint32_t bitfield_size = valobj->GetBitfieldBitSize();
-    // Some bitfields have undefined size (e.g. result of ternary operation).
-    // The AST's `bitfield_size` of those is 0, and no promotion takes place.
-    if (bitfield_size > 0 && in_type.IsInteger()) {
-      auto int_type = GetBasicType(ctx, lldb::eBasicTypeInt);
-      auto uint_type = GetBasicType(ctx, lldb::eBasicTypeUnsignedInt);
-      uint64_t int_byte_size = 0;
-      uint64_t uint_byte_size = 0;
-      if (auto temp = int_type.GetByteSize(ctx.get()))
-        int_byte_size = temp.value();
-      if (auto temp = uint_type.GetByteSize(ctx.get()))
-        uint_byte_size = temp.value();
-      uint32_t int_bit_size = int_byte_size * CHAR_BIT;
-      if (bitfield_size < int_bit_size ||
-          (in_type.IsSigned() && bitfield_size == int_bit_size))
-        valobj = valobj->CastToBasicType(int_type);
-      else if (bitfield_size <= uint_byte_size * CHAR_BIT)
-        valobj = valobj->CastToBasicType(uint_type);
-    }
-  }
-
-  if (in_type.IsArrayType()) {
-    valobj = ArrayToPointerConversion(valobj, ctx);
-  }
-
-  if (valobj->GetCompilerType().IsInteger() ||
-      valobj->GetCompilerType().IsUnscopedEnumerationType()) {
-    CompilerType promoted_type =
-        DoIntegralPromotion(valobj->GetCompilerType(), ctx);
-    if (!promoted_type.CompareTypes(valobj->GetCompilerType()))
-      return valobj->CastToBasicType(promoted_type);
-  }
-
-  return valobj;
 }
 
 static size_t ConversionRank(CompilerType type) {

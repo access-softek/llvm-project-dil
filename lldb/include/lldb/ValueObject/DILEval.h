@@ -131,6 +131,10 @@ public:
    llvm::Error PrepareAssignment(lldb::ValueObjectSP &lhs,
                                  lldb::ValueObjectSP &rhs, uint32_t location);
    llvm::Error CheckCompositeAssignment(const BinaryOpNode *node);
+   llvm::Error PrepareCxxStaticCastForInheritedTypes(
+       CompilerType type, lldb::ValueObjectSP rhs, uint32_t location,
+       std::vector<uint32_t> &idx, uint64_t &offset,
+       CxxStaticCastKind &cast_kind);
 
    lldb::ValueObjectSP EvaluateComparison(BinaryOpKind kind,
                                           lldb::ValueObjectSP lhs,

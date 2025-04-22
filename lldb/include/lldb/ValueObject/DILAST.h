@@ -318,6 +318,12 @@ private:
 class CStyleCastNode : public ASTNode {
 public:
   CStyleCastNode(uint32_t location, CompilerType type, ASTNodeUP operand,
+                 bool is_rvalue)
+      : ASTNode(location, NodeKind::eCStyleCastNode), m_type(type),
+        m_operand(std::move(operand)), m_is_rvalue(is_rvalue) {
+    m_promo_kind = TypePromotionCastKind::eNone;
+  }
+  CStyleCastNode(uint32_t location, CompilerType type, ASTNodeUP operand,
                  CStyleCastKind kind)
       : ASTNode(location, NodeKind::eCStyleCastNode), m_type(type),
         m_operand(std::move(operand)), m_cast_kind(kind) {
@@ -332,9 +338,7 @@ public:
   }
 
   llvm::Expected<lldb::ValueObjectSP> Accept(Visitor *v) const override;
-  bool is_rvalue() const override {
-    return m_cast_kind != CStyleCastKind::eReference;
-  }
+  bool is_rvalue() const override { return m_is_rvalue; }
   CompilerType result_type() const override { return m_type; }
   ValueObject *valobj() const override { return m_operand->valobj(); }
 
@@ -352,6 +356,7 @@ private:
   ASTNodeUP m_operand;
   CStyleCastKind m_cast_kind;
   TypePromotionCastKind m_promo_kind;
+  bool m_is_rvalue;
 };
 
 class CxxStaticCastNode : public ASTNode {

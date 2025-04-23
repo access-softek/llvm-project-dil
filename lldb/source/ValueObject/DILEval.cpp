@@ -1810,15 +1810,6 @@ Interpreter::Visit(const BinaryOpNode *node) {
                                                     "result");
     }
 
-    // Problem: cannot check the type of RHS without evaluating it anymore.
-    // If LHS is true, ignore rhs entirely without producing a potential error?
-    // Or evaluate both anyway to produce a correct error?
-    // LLDB produces error for RHS anyway:
-    // (lldb) expr true || s
-    //                  ˄  ˄
-    //                  │  ╰─ 'Sx' is not contextually convertible to 'bool'
-    //                  ╰─ invalid operands to binary expression
-
     // Breaking early didn't happen, evaluate the RHS and use it as a result.
     auto rhs_or_err = DILEvalNode(node->rhs());
     if (!rhs_or_err) {
@@ -1999,9 +1990,8 @@ Interpreter::Visit(const UnaryOpNode *node) {
 
   switch (node->kind()) {
     case UnaryOpKind::Deref: {
-      if (rhs_type.IsArrayType()) {
+      if (rhs_type.IsArrayType())
         rhs = ArrayToPointerConversion(rhs, m_exe_ctx_scope);
-      }
 
       lldb::ValueObjectSP dynamic_rhs = rhs->GetDynamicValue(m_default_dynamic);
       if (dynamic_rhs)
@@ -2110,12 +2100,18 @@ Interpreter::Visit(const UnaryOpNode *node) {
 llvm::Expected<lldb::ValueObjectSP>
 Interpreter::Visit(const TernaryOpNode *node) {
   auto cond_or_err = DILEvalNode(node->cond());
-  if (!cond_or_err) {
+  if (!cond_or_err)
     return cond_or_err;
-  }
+
   lldb::ValueObjectSP cond = *cond_or_err;
-  assert(cond->GetCompilerType().IsContextuallyConvertibleToBool() &&
-         "invalid ast: must be convertible to bool");
+  // First check if the condition contextually converted to bool.
+  auto cond_type = cond->GetCompilerType();
+  if (!cond_type.IsContextuallyConvertibleToBool()) {
+    return BailOut(ErrorCode::kInvalidOperandType,
+                   llvm::formatv(kValueIsNotConvertibleToBool,
+                                 cond_type.TypeDescription()),
+                   node->GetLocation());
+  }
 
   // Pass down the flow analysis because the conditional operator is a "flow
   // control" construct -- LHS/RHS might be lvalues and eligible for some
@@ -2220,9 +2216,8 @@ llvm::Error Interpreter::PrepareBinaryAddition(lldb::ValueObjectSP &lhs,
   auto result_type =
       ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
 
-  if (result_type.IsScalarType()) {
+  if (result_type.IsScalarType())
     return llvm::Error::success();
-  }
 
   auto lhs_type = lhs->GetCompilerType();
   auto rhs_type = rhs->GetCompilerType();
@@ -2281,9 +2276,8 @@ llvm::Error Interpreter::PrepareBinarySubtraction(lldb::ValueObjectSP &lhs,
   auto result_type =
       ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
 
-  if (result_type.IsScalarType()) {
+  if (result_type.IsScalarType())
     return llvm::Error::success();
-  }
 
   auto lhs_type = lhs->GetCompilerType();
   auto rhs_type = rhs->GetCompilerType();
@@ -2338,9 +2332,8 @@ llvm::Error Interpreter::PrepareBinaryOpScalar(lldb::ValueObjectSP &lhs,
   auto result_type =
       ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
 
-  if (result_type.IsScalarType()) {
+  if (result_type.IsScalarType())
     return llvm::Error::success();
-  }
 
   // Invalid operands.
   return BailOut(ErrorCode::kInvalidOperandType,
@@ -2363,9 +2356,8 @@ llvm::Error Interpreter::PrepareBinaryOpInteger(lldb::ValueObjectSP &lhs,
   auto result_type =
       ArithmeticConversions(lhs, rhs, m_exe_ctx_scope, is_comp_assign);
 
-  if (result_type.IsInteger()) {
+  if (result_type.IsInteger())
     return llvm::Error::success();
-  }
 
   // Invalid operands.
   return BailOut(ErrorCode::kInvalidOperandType,
@@ -2385,15 +2377,12 @@ llvm::Error Interpreter::PrepareBinaryShift(lldb::ValueObjectSP &lhs,
   auto orig_lhs_type = lhs->GetCompilerType();
   auto orig_rhs_type = rhs->GetCompilerType();
 
-  if (!is_comp_assign) {
+  if (!is_comp_assign)
     lhs = UnaryConversion(lhs, m_exe_ctx_scope);
-  }
   rhs = UnaryConversion(rhs, m_exe_ctx_scope);
 
-  if (lhs->GetCompilerType().IsInteger() &&
-      rhs->GetCompilerType().IsInteger()) {
+  if (lhs->GetCompilerType().IsInteger() && rhs->GetCompilerType().IsInteger())
     return llvm::Error::success();
-  }
 
   // Invalid operands.
   return BailOut(ErrorCode::kInvalidOperandType,
@@ -2487,9 +2476,8 @@ llvm::Error Interpreter::PrepareBinaryComparison(BinaryOpKind kind,
   }
 
   if (!is_ordered && ((orig_lhs_type.IsNullPtrType() && rhs_nullptr_or_zero) ||
-                      (lhs_nullptr_or_zero && orig_rhs_type.IsNullPtrType()))) {
+                      (lhs_nullptr_or_zero && orig_rhs_type.IsNullPtrType())))
     return llvm::Error::success();
-  }
 
   // If the operands has arithmetic or enumeration type (scoped or unscoped),
   // usual arithmetic conversions are performed on both operands following the
@@ -2502,16 +2490,15 @@ llvm::Error Interpreter::PrepareBinaryComparison(BinaryOpKind kind,
   auto boolean_ty = GetBasicType(m_exe_ctx_scope, lldb::eBasicTypeBool);
 
   if (lhs_type.IsScalarOrUnscopedEnumerationType() &&
-      rhs_type.IsScalarOrUnscopedEnumerationType()) {
+      rhs_type.IsScalarOrUnscopedEnumerationType())
     return llvm::Error::success();
-  }
 
   // Scoped enums can be compared only to the instances of the same type.
   if (lhs_type.IsScopedEnumerationType() ||
       rhs_type.IsScopedEnumerationType()) {
-    if (lhs_type.CompareTypes(rhs_type)) {
+    if (lhs_type.CompareTypes(rhs_type))
       return llvm::Error::success();
-    }
+
     // Invalid operands.
     return BailOut(ErrorCode::kInvalidOperandType,
                    llvm::formatv(kInvalidOperandsToBinaryExpression,
@@ -2580,9 +2567,9 @@ static bool ImplicitConversionIsAllowed(CompilerType src, CompilerType dst,
   if (dst.IsPointerType()) {
     // Literal zero, `nullptr_t` and arrays can be implicitly converted to
     // pointers.
-    if (is_src_literal_zero || src.IsNullPtrType()) {
+    if (is_src_literal_zero || src.IsNullPtrType())
       return true;
-    }
+
     if (src.IsArrayType() &&
         src.GetArrayElementType(nullptr).CompareTypes(dst.GetPointeeType())) {
       return true;
@@ -2599,9 +2586,8 @@ llvm::Error Interpreter::PrepareAssignment(lldb::ValueObjectSP &lhs,
   auto to_type = lhs->GetCompilerType();
 
   // If the expression already has the required type, nothing to do here.
-  if (from_type.CompareTypes(to_type)) {
+  if (from_type.CompareTypes(to_type))
     return llvm::Error::success();
-  }
 
   // Check if the implicit conversion is possible and insert a cast.
   if (ImplicitConversionIsAllowed(from_type, to_type, IsLiteralZero(rhs))) {

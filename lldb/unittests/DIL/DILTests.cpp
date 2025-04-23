@@ -963,13 +963,14 @@ TEST_F(EvalTest, TestLogicalOperators) {
               "s || false\n"
               "^"));
   EXPECT_THAT(
-      Eval("true || s"),
-      IsError("value of type 'S' is not contextually convertible to 'bool'\n"
-              "true || s\n"
-              "        ^"));
-  EXPECT_THAT(
       Eval("s ? 1 : 2"),
       IsError("value of type 'S' is not contextually convertible to 'bool'"));
+
+  // DIL doesn't check the second operand
+  // if the result is determined by the first
+  this->compare_with_lldb_ = false;
+  EXPECT_THAT(Eval("true || s"), IsEqual("true"));
+  EXPECT_THAT(Eval("false && s"), IsEqual("false"));
 }
 
 TEST_F(EvalTest, TestLocalVariables) {
@@ -1178,7 +1179,7 @@ TEST_F(EvalTest, TestAddressOf) {
   EXPECT_THAT(Eval("&(true ? c : (char)1)"),
               IsError("cannot take the address of an rvalue of type 'char'"));
   EXPECT_THAT(Eval("&(true ? c : 1)"),
-              IsError("cannot take the address of an rvalue of type 'int'"));
+              IsError("cannot take the address of an rvalue of type 'char'"));
 }
 
 TEST_F(EvalTest, TestSubscript) {
@@ -2567,85 +2568,35 @@ TEST_F(EvalTest, TestUnscopedEnumEmpty) {
 }
 
 TEST_F(EvalTest, TestTernaryOperator) {
-  EXPECT_THAT(Eval("true ? c : c"), IsEqual("'\\x02'"));
-  EXPECT_THAT(Eval("true ? c : (char)1"), IsEqual("'\\x02'"));
-  EXPECT_THAT(Eval("true ? c : 1"), IsEqual("2"));
-  EXPECT_THAT(Eval("false ? 1 : c"), IsEqual("2"));
+  // Ternary operator does not do type promotion for operands in DIL
+  this->compare_with_lldb_ = false;
 
-  bool compare_types = HAS_METHOD(lldb::SBType, GetEnumerationIntegerType());
+  EXPECT_THAT(Eval("true ? 1 : 1"), IsEqual("1"));
+  EXPECT_THAT(Eval("false ? 1 : 2"), IsEqual("2"));
   EXPECT_THAT(Eval("false ? a_enum : EnumA::kOneA"), IsEqual("kOneA"));
-  EXPECT_THAT(Eval("false ? b_enum : a_enum"), IsEqual("2", compare_types));
-  EXPECT_THAT(Eval("false ? c : b_enum"), IsEqual("1", compare_types));
-  EXPECT_THAT(Eval("false ? b_enum : c"), IsEqual("2", compare_types));
-
-  EXPECT_THAT(Eval("true ? (int*)15 : 0"),
-              IsEqual(Is32Bit() ? "0x0000000f" : "0x000000000000000f"));
-  EXPECT_THAT(Eval("true ? 0 : (int*)15"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  EXPECT_THAT(Eval("true ? (int*)15 : nullptr"),
-              IsEqual(Is32Bit() ? "0x0000000f" : "0x000000000000000f"));
-  EXPECT_THAT(Eval("true ? nullptr : (int*)15"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  EXPECT_THAT(Eval("true ? 0 : nullptr"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  EXPECT_THAT(Eval("true ? nullptr : 0"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 
   EXPECT_THAT(Eval("+(true ? arr2 : arr2)"), IsOk());
-  EXPECT_THAT(Eval("true ? arr2 : arr3"), IsOk());
-  EXPECT_THAT(Eval("true ? arr2 : 0"), IsOk());
-  EXPECT_THAT(Eval("true ? 0 : arr2"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  EXPECT_THAT(Eval("true ? arr2 : nullptr"), IsOk());
-  EXPECT_THAT(Eval("true ? nullptr : arr2"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  EXPECT_THAT(Eval("true ? arr2 : (int*)15"), IsOk());
-  EXPECT_THAT(Eval("true ? (int*)15 : arr2"),
-              IsEqual(Is32Bit() ? "0x0000000f" : "0x000000000000000f"));
-
   EXPECT_THAT(Eval("&(true ? arr2 : arr2)"), IsOk());
 
-  EXPECT_THAT(Eval("true ? t : 1"),
-              IsError("incompatible operand types ('T' and 'int')\n"
-                      "true ? t : 1\n"
-                      "     ^"));
-  EXPECT_THAT(Eval("true ? 1 : t"),
-              IsError("incompatible operand types ('int' and 'T')\n"
-                      "true ? 1 : t\n"
-                      "     ^"));
-  EXPECT_THAT(Eval("true ? (int*)15 : 1"),
-              IsError("incompatible operand types ('int *' and 'int')\n"
-                      "true ? (int*)15 : 1\n"
-                      "     ^"));
-  EXPECT_THAT(Eval("true ? arr2 : dbl_arr"),
-              IsError("incompatible operand types ('int *' and 'double *')\n"
-                      "true ? arr2 : dbl_arr\n"
-                      "     ^"));
-
-  EXPECT_THAT(Eval("&(true ? *pi : 0)"),
+  EXPECT_THAT(Eval("&(false ? *pi : 0)"),
               IsError("cannot take the address of an rvalue of type 'int'\n"
-                      "&(true ? *pi : 0)\n"
+                      "&(false ? *pi : 0)\n"
                       "^"));
-  EXPECT_THAT(Eval("&(true ? arr2 : pi)"),
+  EXPECT_THAT(Eval("&(false ? &arr2 : pi)"),
               IsError("cannot take the address of an rvalue of type 'int *'\n"
-                      "&(true ? arr2 : pi)\n"
+                      "&(false ? &arr2 : pi)\n"
                       "^"));
-  EXPECT_THAT(Eval("&(true ? arr2 : arr3)"),
-              IsError("cannot take the address of an rvalue of type 'int *'\n"
-                      "&(true ? arr2 : arr3)\n"
-                      "^"));
-
-  EXPECT_THAT(Eval("true ? nullptr : pi"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
-  EXPECT_THAT(Eval("true ? pi : nullptr"), IsOk());
-  EXPECT_THAT(Eval("false ? nullptr : pi"), IsOk());
-  EXPECT_THAT(Eval("false ? pi : nullptr"),
-              IsEqual(Is32Bit() ? "0x00000000" : "0x0000000000000000"));
 
   // Use pointers and arrays in bool context.
   EXPECT_THAT(Eval("pi ? 1 : 2"), IsEqual("1"));
   EXPECT_THAT(Eval("nullptr ? 1 : 2"), IsEqual("2"));
   EXPECT_THAT(Eval("arr2 ? 1 : 2"), IsEqual("1"));
+  EXPECT_THAT(Eval("EnumA::kOneA ? 1 : 2"), IsEqual("1"));
+  EXPECT_THAT(
+      Eval("t ? 1 : 2"),
+      IsError("value of type 'T' is not contextually convertible to 'bool'\n"
+              "t ? 1 : 2\n"
+              "  ^"));
 }
 
 TEST_F(EvalTest, TestSizeOf) {
@@ -3374,7 +3325,8 @@ TEST_F(EvalTest, DISABLED_TestSharedPtrCompare) {
 #endif
 }
 
-TEST_F(EvalTest, TestTypeComparison) {
+// TODO: Force these type comparisons withot a ternary operator
+TEST_F(EvalTest, DISABLED_TestTypeComparison) {
   // This test is for border-case situations in the CompareTypes function.
 
   // Taking an address of ternary expression require operands of the same type.
